@@ -2,14 +2,17 @@ use rand::Rng;
 
 #[test]
 fn neat() {
-    let mut population = vec![Genome::new(2, 1, -30.0, 30.0); 150];
+    let mut population = Population::new(2, 1, 150);
     let generations = 300;
     let fitness_threshold = 3.9; // if above this after fitness error calc => we end sim
-    let compatibility = Compatibility::new(1.0, 1.0, 0.5, 3.0);
+    let compatibility = Compatibility::new(1.0, 1.0, 0.4, 3.0);
     let perfect_fitness = 1.0 * XOR_INPUT.len() as f32;
+    let environment = Environment::new();
+    let mut species_tree = SpeciesTree::new();
+    species_tree.speciate(&mut population, &compatibility);
     for g in 0..generations {
         let mut next_gen = vec![];
-        for genome in population.iter_mut() {
+        for genome in population.genomes.iter_mut() {
             genome.fitness = perfect_fitness;
             for (i, xi) in XOR_INPUT.iter().enumerate() {
                 let predicted = genome.activate(xi.to_vec());
@@ -24,20 +27,34 @@ fn neat() {
         // selection of fittest (top 20% of total population)
         let mut selection = vec![];
         // TODO modify below to account for how many offspring in each species (eases the species compat part)
-        for _ in population.len() {
+        for _ in 0..population.count {
             // parent1 = random
             // parent2 = random (compatible w/ species of first)
             // crossover
             // mutate
             // next_gen.push(mutated_crossover);
         }
-        population = next_gen;
+        population.genomes = next_gen;
     }
-    // ans = population.max_fitness() (iter to find best)
+    // ans = population.max_fitness() (iter to find best any species can win)
+}
+pub(crate) struct Evaluation {}
+pub(crate) struct Population {
+    pub(crate) genomes: Vec<Genome>,
+    pub(crate) count: usize,
+}
+impl Population {
+    pub(crate) fn new(inputs: usize, outputs: usize, count: usize) -> Self {
+        Self {
+            genomes: vec![Genome::new(inputs, outputs); count],
+            count,
+        }
+    }
 }
 pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0]];
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 pub(crate) type NodeId = usize;
+#[derive(Clone)]
 pub(crate) enum NodeType {
     Input,
     Hidden,
@@ -47,6 +64,7 @@ pub(crate) enum NodeType {
 pub(crate) fn sigmoid(z: f32) -> f32 {
     1.0 / (1.0 + (-z).exp())
 }
+#[derive(Clone)]
 pub(crate) struct Node {
     pub(crate) id: NodeId,
     pub(crate) value: f32,
@@ -56,7 +74,12 @@ impl Node {
     pub(crate) fn new(id: NodeId, ty: NodeType) -> Self {
         Self { id, value: 0.0, ty }
     }
+    pub(crate) fn value(mut self, v: f32) -> Self {
+        self.value = v;
+        self
+    }
 }
+#[derive(Clone)]
 pub(crate) struct Connection {
     pub(crate) from: NodeId,
     pub(crate) to: NodeId,
@@ -85,13 +108,20 @@ impl Innovation {
         Self { a, b }
     }
 }
+pub(crate) type SpeciesId = usize;
+#[derive(Clone)]
 pub(crate) struct Genome {
     pub(crate) nodes: Vec<Node>,
     pub(crate) connections: Vec<Connection>,
     pub(crate) fitness: f32,
+    pub(crate) node_id_generator: NodeId,
+    pub(crate) species_id: SpeciesId,
 }
 impl Genome {
-    pub(crate) fn new(inputs: usize, outputs: usize, weight_min: f32, weight_max: f32) -> Self {
+    pub(crate) fn compatibility_metrics(&self, other: &Self) -> CompatibilityMetrics {
+        todo!()
+    }
+    pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
         let mut nodes = vec![];
         for i in 0..inputs {
             nodes.push(Node::new(i, NodeType::Input));
@@ -105,7 +135,7 @@ impl Genome {
                 connections.push(Connection::new(
                     i,
                     o,
-                    rand::thread_rng().gen_range(weight_min..weight_max),
+                    rand::thread_rng().gen_range(0.0..1.0),
                     true,
                 ));
             }
@@ -114,13 +144,15 @@ impl Genome {
         connections.push(Connection::new(
             nodes.len().checked_sub(1).unwrap_or_default(),
             inputs + 1,
-            rand::thread_rng().gen_range(weight_min..weight_max),
+            rand::thread_rng().gen_range(0.0..1.0),
             true,
         ));
         Self {
             nodes,
             connections,
             fitness: 0.0,
+            node_id_generator: 0,
+            species_id: 0,
         }
     }
     pub(crate) fn activate(&self, inputs: Vec<f32>) -> Vec<f32> {
@@ -133,9 +165,17 @@ pub(crate) struct Compatibility {
     pub(crate) c3: f32,
     pub(crate) threshold: f32,
 }
+pub(crate) struct CompatibilityMetrics {
+    pub(crate) n: f32,
+    pub(crate) excess: f32,
+    pub(crate) disjoint: f32,
+    pub(crate) weight_difference: f32,
+}
 impl Compatibility {
-    pub(crate) fn distance(&self, n: f32, excess: f32, disjoint: f32, wd: f32) -> f32 {
-        todo!()
+    pub(crate) fn distance(&self, metrics: CompatibilityMetrics) -> f32 {
+        self.c1 * metrics.excess / metrics.n
+            + self.c2 * metrics.disjoint / metrics.n
+            + self.c3 * metrics.weight_difference
     }
     pub(crate) fn new(c1: f32, c2: f32, c3: f32, threshold: f32) -> Self {
         Self {
@@ -146,10 +186,69 @@ impl Compatibility {
         }
     }
 }
-pub(crate) struct SpeciesDescriptor {
+pub(crate) struct Species {
     pub(crate) genome: Genome,
     pub(crate) explicit_fitness_sharing: f32,
 }
-pub(crate) struct Species {
-    pub(crate) order: Vec<SpeciesDescriptor>,
+impl Species {
+    pub(crate) fn new(genome: Genome) -> Self {
+        Self {
+            genome,
+            explicit_fitness_sharing: 0.0,
+        }
+    }
+}
+pub(crate) struct SpeciesTree {
+    pub(crate) order: Vec<Species>,
+}
+
+impl SpeciesTree {
+    fn new() -> Self {
+        Self { order: vec![] }
+    }
+    pub(crate) fn speciate(&mut self, population: &mut Population, compatibility: &Compatibility) {
+        for genome in population.genomes.iter_mut() {
+            let mut found = None;
+            for (i, species) in self.order.iter().enumerate() {
+                let distance =
+                    compatibility.distance(genome.compatibility_metrics(&species.genome));
+                if distance < compatibility.threshold {
+                    found = Some(i);
+                    break;
+                }
+            }
+            let s = if let Some(f) = found {
+                f
+            } else {
+                self.order.push(Species::new(genome.clone()));
+                self.order.len().checked_sub(1).unwrap_or_default()
+            };
+            genome.species_id = s;
+        }
+    }
+}
+
+pub(crate) struct Environment {
+    pub(crate) connection_weight: (f32, f32, f32),
+    pub(crate) disable_gene: f32,
+    pub(crate) skip_crossover: f32,
+    pub(crate) interspecies: f32,
+    pub(crate) add_node: f32,
+    pub(crate) add_connection: f32,
+    pub(crate) stagnation_threshold: usize,
+    pub(crate) champion_network_count: usize,
+}
+impl Environment {
+    pub(crate) fn new() -> Self {
+        Self {
+            connection_weight: (0.8, 0.9, 0.1),
+            disable_gene: 0.75,
+            skip_crossover: 0.25,
+            interspecies: 0.001,
+            add_node: 0.03,
+            add_connection: 0.05,
+            stagnation_threshold: 15,
+            champion_network_count: 5,
+        }
+    }
 }
