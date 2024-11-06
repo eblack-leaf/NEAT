@@ -1,5 +1,6 @@
 use rand::Rng;
-
+pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0]];
+pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 #[test]
 fn neat() {
     let mut population = Population::new(2, 1, 150);
@@ -19,15 +20,15 @@ fn neat() {
                 let xo = XOR_OUTPUT[i];
                 genome.fitness -= (predicted[0] - xo).powi(2);
             }
-            let mut aggregate = 0.0;
+            let mut summation = 0.0;
             for (j, other) in population.genomes.iter().cloned().enumerate() {
                 if i != j {
                     let distance = compatibility.distance(genome.compatibility_metrics(&other));
                     let share = distance < compatibility.threshold;
-                    aggregate += distance * f32::from(share);
+                    summation += distance * f32::from(share);
                 }
             }
-            genome.fitness /= aggregate;
+            genome.fitness /= summation;
             species_tree
                 .order
                 .get_mut(genome.species_id)
@@ -70,14 +71,13 @@ pub(crate) struct Population {
 }
 impl Population {
     pub(crate) fn new(inputs: usize, outputs: usize, count: usize) -> Self {
-        Self {
-            genomes: vec![Genome::new(inputs, outputs); count],
-            count,
+        let mut genomes = vec![];
+        for i in 0..count {
+            genomes.push(Genome::new(inputs, outputs, i));
         }
+        Self { genomes, count }
     }
 }
-pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0]];
-pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 pub(crate) type NodeId = usize;
 #[derive(Clone)]
 pub(crate) enum NodeType {
@@ -147,12 +147,13 @@ pub(crate) struct Genome {
     pub(crate) fitness: f32,
     pub(crate) node_id_generator: NodeId,
     pub(crate) species_id: SpeciesId,
+    pub(crate) id: GenomeId,
 }
 impl Genome {
     pub(crate) fn compatibility_metrics(&self, other: &Self) -> CompatibilityMetrics {
         todo!()
     }
-    pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
+    pub(crate) fn new(inputs: usize, outputs: usize, id: GenomeId) -> Self {
         let mut nodes = vec![];
         for i in 0..inputs {
             nodes.push(Node::new(i, NodeType::Input));
@@ -184,6 +185,7 @@ impl Genome {
             fitness: 0.0,
             node_id_generator: 0,
             species_id: 0,
+            id,
         }
     }
     pub(crate) fn activate(&self, inputs: Vec<f32>) -> Vec<f32> {
@@ -217,17 +219,18 @@ impl Compatibility {
         }
     }
 }
+pub(crate) type GenomeId = usize;
 pub(crate) struct Species {
-    pub(crate) current_nodes: Vec<NodeId>,
-    pub(crate) genome: Genome,
+    pub(crate) current_organisms: Vec<GenomeId>,
+    pub(crate) representation: Genome,
     pub(crate) count: usize,
     pub(crate) explicit_fitness_sharing: f32,
 }
 impl Species {
     pub(crate) fn new(genome: Genome) -> Self {
         Self {
-            current_nodes: vec![],
-            genome,
+            current_organisms: vec![],
+            representation: genome,
             count: 0,
             explicit_fitness_sharing: 0.0,
         }
@@ -253,18 +256,24 @@ impl SpeciesTree {
         for species in self.order.iter_mut() {
             species.count = 0;
             species.explicit_fitness_sharing = 0.0;
+            species.current_organisms.clear();
         }
         for genome in population.iter_mut() {
             let mut found = None;
             for (i, species) in self.order.iter().enumerate() {
                 let distance =
-                    compatibility.distance(genome.compatibility_metrics(&species.genome));
+                    compatibility.distance(genome.compatibility_metrics(&species.representation));
                 if distance < compatibility.threshold {
                     found = Some(i);
                     break;
                 }
             }
             let s = if let Some(f) = found {
+                self.order
+                    .get_mut(f)
+                    .unwrap()
+                    .current_organisms
+                    .push(genome.id);
                 f
             } else {
                 self.order.push(Species::new(genome.clone()));
