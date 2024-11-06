@@ -9,32 +9,57 @@ fn neat() {
     let perfect_fitness = 1.0 * XOR_INPUT.len() as f32;
     let environment = Environment::new();
     let mut species_tree = SpeciesTree::new();
-    species_tree.speciate(&mut population, &compatibility);
+    species_tree.speciate(&mut population.genomes, &compatibility);
     for g in 0..generations {
         let mut next_gen = vec![];
-        for genome in population.genomes.iter_mut() {
+        for (i, genome) in population.genomes.iter_mut().enumerate() {
             genome.fitness = perfect_fitness;
             for (i, xi) in XOR_INPUT.iter().enumerate() {
                 let predicted = genome.activate(xi.to_vec());
                 let xo = XOR_OUTPUT[i];
                 genome.fitness -= (predicted[0] - xo).powi(2);
             }
-            // TODO normalize by species???
-            // need distance of each other in population * share-fn 0/1 modifier
+            let mut aggregate = 0.0;
+            for (j, other) in population.genomes.iter().cloned().enumerate() {
+                if i != j {
+                    let distance = compatibility.distance(genome.compatibility_metrics(&other));
+                    let share = distance < compatibility.threshold;
+                    aggregate += distance * f32::from(share);
+                }
+            }
+            genome.fitness /= aggregate;
+            species_tree
+                .order
+                .get_mut(genome.species_id)
+                .unwrap()
+                .explicit_fitness_sharing += genome.fitness;
+            species_tree.total_fitness += genome.fitness;
         }
-        // let species_proportion = species-fitness-value (avg-of-genomes-in-species [after share-norm]) / population-total (all-species-totals);
-        // let species_offspring_num = species_proportion * population.len();
         // selection of fittest (top 20% of total population)
         let mut selection = vec![];
-        // TODO modify below to account for how many offspring in each species (eases the species compat part)
-        for _ in 0..population.count {
-            // parent1 = random
-            // parent2 = random (compatible w/ species of first)
-            // crossover
-            // mutate
-            // next_gen.push(mutated_crossover);
+        let mut total_remaining = population.count;
+        for (i, species) in species_tree.order.iter().enumerate() {
+            if species.count > 0 {
+                let requested_offspring = if i + 1 == species_tree.num_active_species() {
+                    total_remaining
+                } else {
+                    let requested_offspring =
+                        (species.explicit_fitness_sharing / species_tree.total_fitness
+                            * population.count as f32) as usize;
+                    total_remaining -= requested_offspring.min(total_remaining);
+                    requested_offspring
+                };
+                for offspring_request in 0..requested_offspring {
+                    // parent1 = random (from species.nodes)
+                    // parent2 = random (from species.nodes) or environment.interspecies [all]
+                    // crossover
+                    // mutate
+                    // next_gen.push(mutated_crossover);
+                }
+            }
         }
         population.genomes = next_gen;
+        species_tree.speciate(&mut population.genomes, &compatibility);
     }
     // ans = population.max_fitness() (iter to find best any species can win)
 }
@@ -69,10 +94,16 @@ pub(crate) struct Node {
     pub(crate) id: NodeId,
     pub(crate) value: f32,
     pub(crate) ty: NodeType,
+    pub(crate) disabled: bool,
 }
 impl Node {
     pub(crate) fn new(id: NodeId, ty: NodeType) -> Self {
-        Self { id, value: 0.0, ty }
+        Self {
+            id,
+            value: 0.0,
+            ty,
+            disabled: false,
+        }
     }
     pub(crate) fn value(mut self, v: f32) -> Self {
         self.value = v;
@@ -187,27 +218,43 @@ impl Compatibility {
     }
 }
 pub(crate) struct Species {
+    pub(crate) current_nodes: Vec<NodeId>,
     pub(crate) genome: Genome,
+    pub(crate) count: usize,
     pub(crate) explicit_fitness_sharing: f32,
 }
 impl Species {
     pub(crate) fn new(genome: Genome) -> Self {
         Self {
+            current_nodes: vec![],
             genome,
+            count: 0,
             explicit_fitness_sharing: 0.0,
         }
     }
 }
 pub(crate) struct SpeciesTree {
     pub(crate) order: Vec<Species>,
+    pub(crate) total_fitness: f32,
 }
 
 impl SpeciesTree {
     fn new() -> Self {
-        Self { order: vec![] }
+        Self {
+            order: vec![],
+            total_fitness: 0.0,
+        }
     }
-    pub(crate) fn speciate(&mut self, population: &mut Population, compatibility: &Compatibility) {
-        for genome in population.genomes.iter_mut() {
+    pub(crate) fn num_active_species(&self) -> usize {
+        todo!()
+    }
+    pub(crate) fn speciate(&mut self, population: &mut Vec<Genome>, compatibility: &Compatibility) {
+        self.total_fitness = 0.0;
+        for species in self.order.iter_mut() {
+            species.count = 0;
+            species.explicit_fitness_sharing = 0.0;
+        }
+        for genome in population.iter_mut() {
             let mut found = None;
             for (i, species) in self.order.iter().enumerate() {
                 let distance =
@@ -224,6 +271,9 @@ impl SpeciesTree {
                 self.order.len().checked_sub(1).unwrap_or_default()
             };
             genome.species_id = s;
+        }
+        for genome in population.iter() {
+            self.order.get_mut(genome.species_id).unwrap().count += 1;
         }
     }
 }
