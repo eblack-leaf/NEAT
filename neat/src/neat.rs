@@ -47,10 +47,27 @@ fn neat() {
                     let requested_offspring =
                         (species.explicit_fitness_sharing / species_tree.total_fitness
                             * population.count as f32) as usize;
-                    total_remaining -= requested_offspring.min(total_remaining);
+                    total_remaining = total_remaining
+                        .checked_sub(requested_offspring)
+                        .unwrap_or_default();
                     requested_offspring
                 };
-                for offspring_request in 0..requested_offspring {
+                let skip_crossover =
+                    (requested_offspring as f32 * environment.skip_crossover) as usize;
+                let normal = requested_offspring
+                    .checked_sub(skip_crossover)
+                    .unwrap_or_default();
+                let normal = if species.count > environment.champion_network_count {
+                    // next_gen.push(champion);
+                    normal.checked_sub(1).unwrap_or_default()
+                } else {
+                    normal
+                };
+                for offspring_request in 0..skip_crossover {
+                    // mutate
+                    // next_gen.push(mutated)
+                }
+                for offspring_request in 0..normal {
                     // parent1 = random (from species.nodes)
                     // parent2 = random (from species.nodes) or environment.interspecies [all]
                     // crossover
@@ -222,7 +239,7 @@ impl Compatibility {
 pub(crate) type GenomeId = usize;
 pub(crate) struct Species {
     pub(crate) current_organisms: Vec<GenomeId>,
-    pub(crate) representation: Genome,
+    pub(crate) representative: Genome,
     pub(crate) count: usize,
     pub(crate) explicit_fitness_sharing: f32,
 }
@@ -230,7 +247,7 @@ impl Species {
     pub(crate) fn new(genome: Genome) -> Self {
         Self {
             current_organisms: vec![],
-            representation: genome,
+            representative: genome,
             count: 0,
             explicit_fitness_sharing: 0.0,
         }
@@ -262,7 +279,7 @@ impl SpeciesTree {
             let mut found = None;
             for (i, species) in self.order.iter().enumerate() {
                 let distance =
-                    compatibility.distance(genome.compatibility_metrics(&species.representation));
+                    compatibility.distance(genome.compatibility_metrics(&species.representative));
                 if distance < compatibility.threshold {
                     found = Some(i);
                     break;
