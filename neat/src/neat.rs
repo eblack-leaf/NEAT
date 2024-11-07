@@ -20,32 +20,88 @@ fn neat() {
                 let xo = XOR_OUTPUT[i];
                 genome.fitness -= (predicted[0] - xo).powi(2);
             }
+            species_tree
+                .order
+                .get_mut(genome.species_id)
+                .unwrap()
+                .explicit_fitness_sharing += genome.fitness;
+        }
+        let best_genome = population
+            .genomes
+            .iter()
+            .max_by(|g, o| g.fitness.partial_cmp(&o.fitness).unwrap())
+            .unwrap()
+            .id;
+        if population.genomes.get(best_genome).unwrap().fitness >= fitness_threshold {
+            // found target threshold
+            break;
         }
         let min_fitness = population
             .genomes
             .iter()
-            .min_by(|g, o| g.fitness.partial_cmp(&o.fitness).unwrap());
+            .min_by(|g, o| g.fitness.partial_cmp(&o.fitness).unwrap())
+            .unwrap()
+            .fitness;
         let max_fitness = population
             .genomes
             .iter()
-            .max_by(|g, o| g.fitness.partial_cmp(&o.fitness).unwrap());
+            .max_by(|g, o| g.fitness.partial_cmp(&o.fitness).unwrap())
+            .unwrap()
+            .fitness;
+        let fit_range = (max_fitness - min_fitness).max(1.0);
         for species in species_tree.order.iter_mut() {
-
+            let species_max = species
+                .current_organisms
+                .iter()
+                .map(|gi| -> f32 { population.genomes.get(*gi).unwrap().fitness })
+                .max_by(|lhs, rhs| lhs.partial_cmp(&rhs).unwrap())
+                .unwrap();
+            if species.max_fitness < species_max {
+                species.max_fitness = species_max;
+                species.last_improvement = g;
+            }
+            if g > species.last_improvement + environment.stagnation_threshold {
+                // cull species and clean-up?
+                for s in species.current_organisms.drain(..) {
+                    // give to new [random] species copying representative
+                }
+                continue;
+            }
+            let average_of_species = species.explicit_fitness_sharing / species.count as f32;
+            species.explicit_fitness_sharing = (average_of_species - min_fitness) / fit_range;
+            species_tree.total_fitness += species.explicit_fitness_sharing;
         }
-        // selection of fittest (top 20% of total population)
-        let mut selection = vec![];
+        // selection of fittest (top 30% of total population)
+        population
+            .genomes
+            .sort_by(|a, b| a.fitness.partial_cmp(&b.fitness).unwrap());
+        population.genomes.reverse();
+        let mut selection = population
+            .genomes
+            .get(0..(environment.elitism_percent * population.count as f32) as usize)
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect::<Vec<Genome>>();
         let mut total_remaining = population.count;
         for (i, species) in species_tree.order.iter().enumerate() {
             if species.count > 0 {
                 let requested_offspring = if i + 1 == species_tree.num_active_species() {
                     total_remaining
                 } else {
-                    let requested_offspring =
-                        (species.explicit_fitness_sharing / species_tree.total_fitness
-                            * population.count as f32) as usize;
+                    let species_percent =
+                        species.explicit_fitness_sharing / species_tree.total_fitness;
+                    let of_population = species_percent * population.count as f32;
+                    let requested_offspring = of_population as usize;
                     total_remaining = total_remaining
                         .checked_sub(requested_offspring)
                         .unwrap_or_default();
+                    requested_offspring
+                };
+                let requested_offspring = if species.count > environment.champion_network_count {
+                    // next_gen.push(champion);
+                    requested_offspring.checked_sub(1).unwrap_or_default()
+                } else {
                     requested_offspring
                 };
                 let skip_crossover =
@@ -53,12 +109,6 @@ fn neat() {
                 let normal = requested_offspring
                     .checked_sub(skip_crossover)
                     .unwrap_or_default();
-                let normal = if species.count > environment.champion_network_count {
-                    // next_gen.push(champion);
-                    normal.checked_sub(1).unwrap_or_default()
-                } else {
-                    normal
-                };
                 for offspring_request in 0..skip_crossover {
                     // mutate
                     // next_gen.push(mutated)
@@ -72,6 +122,7 @@ fn neat() {
                 }
             }
         }
+        // save results of run
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
     }
@@ -297,9 +348,11 @@ impl SpeciesTree {
                 self.order.len().checked_sub(1).unwrap_or_default()
             };
             genome.species_id = s;
+            self.order.get_mut(s).unwrap().count += 1;
         }
-        for genome in population.iter() {
-            self.order.get_mut(genome.species_id).unwrap().count += 1;
+        for species in self.order.iter() {
+            // get random of species.current_organisms[rand]
+            // set as representative
         }
     }
 }
@@ -313,6 +366,7 @@ pub(crate) struct Environment {
     pub(crate) add_connection: f32,
     pub(crate) stagnation_threshold: usize,
     pub(crate) champion_network_count: usize,
+    pub(crate) elitism_percent: f32,
 }
 impl Environment {
     pub(crate) fn new() -> Self {
@@ -325,6 +379,7 @@ impl Environment {
             add_connection: 0.05,
             stagnation_threshold: 15,
             champion_network_count: 5,
+            elitism_percent: 0.3,
         }
     }
 }
