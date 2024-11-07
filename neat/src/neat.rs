@@ -1,17 +1,23 @@
 use rand::Rng;
+use std::collections::{HashMap, HashSet};
 pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0]];
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
+pub(crate) const INPUT_DIM: usize = 2;
+pub(crate) const OUTPUT_DIM: usize = 1;
+pub(crate) const POPULATION_COUNT: usize = 150;
+pub(crate) const GENERATIONS: usize = 300;
+pub(crate) const FITNESS_THRESHOLD: f32 = 3.9;
 #[test]
 fn neat() {
-    let mut population = Population::new(2, 1, 150);
-    let generations = 300;
-    let fitness_threshold = 3.9; // if above this after fitness error calc => we end sim
+    let mut population = Population::new(INPUT_DIM, OUTPUT_DIM, POPULATION_COUNT);
     let compatibility = Compatibility::new(1.0, 1.0, 0.4, 3.0);
     let perfect_fitness = 1.0 * XOR_INPUT.len() as f32;
     let environment = Environment::new();
+    let mut existing_innovation = ExistingInnovations::new(INPUT_DIM, OUTPUT_DIM);
+    let mut evaluation = Evaluation::new(GENERATIONS, FITNESS_THRESHOLD);
     let mut species_tree = SpeciesTree::new();
     species_tree.speciate(&mut population.genomes, &compatibility);
-    for g in 0..generations {
+    for g in 0..evaluation.generations {
         let mut next_gen = vec![];
         for (i, genome) in population.genomes.iter_mut().enumerate() {
             genome.fitness = perfect_fitness;
@@ -30,10 +36,16 @@ fn neat() {
             .genomes
             .iter()
             .max_by(|g, o| g.fitness.partial_cmp(&o.fitness).unwrap())
-            .unwrap()
-            .id;
-        if population.genomes.get(best_genome).unwrap().fitness >= fitness_threshold {
+            .cloned()
+            .unwrap();
+        if best_genome.fitness >= evaluation.fitness_threshold {
             // found target threshold
+            evaluation.history.push(GenerationMetrics::new(
+                best_genome,
+                g,
+                species_tree.clone(),
+                population.genomes.clone(),
+            ));
             break;
         }
         let min_fitness = population
@@ -50,6 +62,9 @@ fn neat() {
             .fitness;
         let fit_range = (max_fitness - min_fitness).max(1.0);
         for species in species_tree.order.iter_mut() {
+            if species.count == 0 {
+                continue;
+            }
             let species_max = species
                 .current_organisms
                 .iter()
@@ -62,6 +77,7 @@ fn neat() {
             }
             if g > species.last_improvement + environment.stagnation_threshold {
                 // cull species and clean-up?
+
                 for s in species.current_organisms.drain(..) {
                     // give to new [random] species copying representative
                 }
@@ -123,12 +139,76 @@ fn neat() {
             }
         }
         // save results of run
+        evaluation.history.push(GenerationMetrics::new(
+            best_genome,
+            g,
+            species_tree.clone(),
+            population.genomes.clone(),
+        ));
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
     }
     // ans = population.max_fitness() (iter to find best any species can win)
+    println!("evaluation: {:?}", evaluation.history);
 }
-pub(crate) struct Evaluation {}
+pub(crate) struct Evaluation {
+    pub(crate) history: Vec<GenerationMetrics>,
+    pub(crate) generations: usize,
+    pub(crate) fitness_threshold: f32,
+}
+impl Evaluation {
+    pub(crate) fn new(generations: usize, fitness_threshold: f32) -> Self {
+        Self {
+            history: vec![],
+            generations,
+            fitness_threshold,
+        }
+    }
+}
+pub(crate) struct ExistingInnovations {
+    pub(crate) set: HashMap<(NodeId, NodeId), Innovation>,
+    pub(crate) current: Innovation,
+}
+impl ExistingInnovations {
+    pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
+        Self {
+            set: Default::default(),
+            current: Innovation::new(inputs * outputs + 1),
+        }
+    }
+    pub(crate) fn checked_innovation(&mut self, from: NodeId, to: NodeId) -> Innovation {
+        let pair = (from, to);
+        if let Some(k) = self.set.get(&pair) {
+            k.clone()
+        } else {
+            let idx = self.current.increment();
+            self.set.insert(pair, idx);
+            idx
+        }
+    }
+}
+#[derive(Debug)]
+pub(crate) struct GenerationMetrics {
+    pub(crate) best_genome: Genome,
+    pub(crate) generation: usize,
+    pub(crate) species: SpeciesTree,
+    pub(crate) population: Vec<Genome>,
+}
+impl GenerationMetrics {
+    pub(crate) fn new(
+        best_genome: Genome,
+        generation: usize,
+        species: SpeciesTree,
+        population: Vec<Genome>,
+    ) -> Self {
+        Self {
+            best_genome,
+            generation,
+            species,
+            population,
+        }
+    }
+}
 pub(crate) struct Population {
     pub(crate) genomes: Vec<Genome>,
     pub(crate) count: usize,
@@ -143,7 +223,7 @@ impl Population {
     }
 }
 pub(crate) type NodeId = usize;
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum NodeType {
     Input,
     Hidden,
@@ -153,7 +233,7 @@ pub(crate) enum NodeType {
 pub(crate) fn sigmoid(z: f32) -> f32 {
     1.0 / (1.0 + (-z).exp())
 }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Node {
     pub(crate) id: NodeId,
     pub(crate) value: f32,
@@ -174,7 +254,7 @@ impl Node {
         self
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Connection {
     pub(crate) from: NodeId,
     pub(crate) to: NodeId,
@@ -183,28 +263,38 @@ pub(crate) struct Connection {
     pub(crate) innovation: Innovation,
 }
 impl Connection {
-    pub(crate) fn new(from: NodeId, to: NodeId, weight: f32, enabled: bool) -> Self {
+    pub(crate) fn new(
+        from: NodeId,
+        to: NodeId,
+        weight: f32,
+        enabled: bool,
+        innovation: Innovation,
+    ) -> Self {
         Self {
             from,
             to,
             weight,
             enabled,
-            innovation: Innovation::new(from, to),
+            innovation,
         }
     }
 }
 #[derive(PartialOrd, PartialEq, Hash, Copy, Clone, Debug)]
 pub(crate) struct Innovation {
-    pub(crate) a: NodeId,
-    pub(crate) b: NodeId,
+    pub(crate) idx: usize,
 }
 impl Innovation {
-    pub(crate) fn new(a: NodeId, b: NodeId) -> Self {
-        Self { a, b }
+    pub(crate) fn new(idx: usize) -> Self {
+        Self { idx }
+    }
+    pub(crate) fn increment(&mut self) -> Self {
+        let s = self.idx;
+        self.idx += 1;
+        Self { idx: s }
     }
 }
 pub(crate) type SpeciesId = usize;
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Genome {
     pub(crate) nodes: Vec<Node>,
     pub(crate) connections: Vec<Connection>,
@@ -218,6 +308,7 @@ impl Genome {
         todo!()
     }
     pub(crate) fn new(inputs: usize, outputs: usize, id: GenomeId) -> Self {
+        let mut local_innovation_for_setup = Innovation::new(0);
         let mut nodes = vec![];
         for i in 0..inputs {
             nodes.push(Node::new(i, NodeType::Input));
@@ -233,6 +324,7 @@ impl Genome {
                     o,
                     rand::thread_rng().gen_range(0.0..1.0),
                     true,
+                    local_innovation_for_setup.increment(),
                 ));
             }
         }
@@ -242,6 +334,7 @@ impl Genome {
             inputs + 1,
             rand::thread_rng().gen_range(0.0..1.0),
             true,
+            local_innovation_for_setup.increment(),
         ));
         Self {
             nodes,
@@ -284,6 +377,7 @@ impl Compatibility {
     }
 }
 pub(crate) type GenomeId = usize;
+#[derive(Clone, Debug)]
 pub(crate) struct Species {
     pub(crate) current_organisms: Vec<GenomeId>,
     pub(crate) representative: Genome,
@@ -304,6 +398,7 @@ impl Species {
         }
     }
 }
+#[derive(Clone, Debug)]
 pub(crate) struct SpeciesTree {
     pub(crate) order: Vec<Species>,
     pub(crate) total_fitness: f32,
@@ -317,7 +412,10 @@ impl SpeciesTree {
         }
     }
     pub(crate) fn num_active_species(&self) -> usize {
-        todo!()
+        self.order
+            .iter()
+            .filter_map(|s| if s.count > 0 { Some(1) } else { None })
+            .sum()
     }
     pub(crate) fn speciate(&mut self, population: &mut Vec<Genome>, compatibility: &Compatibility) {
         self.total_fitness = 0.0;
@@ -344,8 +442,11 @@ impl SpeciesTree {
                     .push(genome.id);
                 f
             } else {
-                self.order.push(Species::new(genome.clone()));
-                self.order.len().checked_sub(1).unwrap_or_default()
+                let idx = self.order.len();
+                let mut g = genome.clone();
+                g.species_id = idx;
+                self.order.push(Species::new(g));
+                idx
             };
             genome.species_id = s;
             self.order.get_mut(s).unwrap().count += 1;
