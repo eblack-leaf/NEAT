@@ -370,7 +370,7 @@ impl Genome {
             nodes,
             connections,
             fitness: 0.0,
-            node_id_generator: 0,
+            node_id_generator: inputs + outputs * 2,
             species_id: 0,
             id,
         }
