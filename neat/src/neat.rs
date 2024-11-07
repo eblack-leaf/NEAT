@@ -1,5 +1,5 @@
 use rand::Rng;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0]];
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 pub(crate) const INPUT_DIM: usize = 2;
@@ -39,7 +39,6 @@ fn neat() {
             .cloned()
             .unwrap();
         if best_genome.fitness >= evaluation.fitness_threshold {
-            // found target threshold
             evaluation.history.push(GenerationMetrics::new(
                 best_genome,
                 g,
@@ -61,6 +60,7 @@ fn neat() {
             .unwrap()
             .fitness;
         let fit_range = (max_fitness - min_fitness).max(1.0);
+        let mut culled_organisms = vec![];
         for species in species_tree.order.iter_mut() {
             if species.count == 0 {
                 continue;
@@ -76,10 +76,9 @@ fn neat() {
                 species.last_improvement = g;
             }
             if g > species.last_improvement + environment.stagnation_threshold {
-                // cull species and clean-up?
-
+                species.count = 0;
                 for s in species.current_organisms.drain(..) {
-                    // give to new [random] species copying representative
+                    culled_organisms.push(s);
                 }
                 continue;
             }
@@ -87,7 +86,23 @@ fn neat() {
             species.explicit_fitness_sharing = (average_of_species - min_fitness) / fit_range;
             species_tree.total_fitness += species.explicit_fitness_sharing;
         }
-        // selection of fittest (top 30% of total population)
+        for culled in culled_organisms {
+            let mut filled = None;
+            while filled.is_none() {
+                let attempted_conversion =
+                    rand::thread_rng().gen_range(0..species_tree.order.len());
+                let c = species_tree.order.get(attempted_conversion).unwrap().count;
+                if c > 0 {
+                    filled = Some(attempted_conversion);
+                }
+            }
+            *population.genomes.get_mut(culled).unwrap() = species_tree
+                .order
+                .get(filled.unwrap())
+                .unwrap()
+                .representative
+                .clone();
+        }
         population
             .genomes
             .sort_by(|a, b| a.fitness.partial_cmp(&b.fitness).unwrap());
@@ -115,7 +130,21 @@ fn neat() {
                     requested_offspring
                 };
                 let requested_offspring = if species.count > environment.champion_network_count {
-                    // next_gen.push(champion);
+                    let champion_id = *species
+                        .current_organisms
+                        .iter()
+                        .max_by(|l, r| {
+                            population
+                                .genomes
+                                .get(**l)
+                                .unwrap()
+                                .fitness
+                                .partial_cmp(&population.genomes.get(**r).unwrap().fitness)
+                                .unwrap()
+                        })
+                        .unwrap();
+                    let champion = population.genomes.get(champion_id).unwrap().clone();
+                    next_gen.push(champion);
                     requested_offspring.checked_sub(1).unwrap_or_default()
                 } else {
                     requested_offspring
@@ -138,7 +167,6 @@ fn neat() {
                 }
             }
         }
-        // save results of run
         evaluation.history.push(GenerationMetrics::new(
             best_genome,
             g,
@@ -148,7 +176,6 @@ fn neat() {
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
     }
-    // ans = population.max_fitness() (iter to find best any species can win)
     println!("evaluation: {:?}", evaluation.history);
 }
 pub(crate) struct Evaluation {
@@ -451,9 +478,13 @@ impl SpeciesTree {
             genome.species_id = s;
             self.order.get_mut(s).unwrap().count += 1;
         }
-        for species in self.order.iter() {
-            // get random of species.current_organisms[rand]
-            // set as representative
+        for species in self.order.iter_mut() {
+            if species.count > 0 {
+                let rand_idx = rand::thread_rng().gen_range(0..species.current_organisms.len());
+                let rand_rep = *species.current_organisms.get(rand_idx).unwrap();
+                let representative = population.get(rand_rep).unwrap().clone();
+                species.representative = representative;
+            }
         }
     }
 }
