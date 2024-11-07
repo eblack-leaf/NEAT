@@ -20,21 +20,17 @@ fn neat() {
                 let xo = XOR_OUTPUT[i];
                 genome.fitness -= (predicted[0] - xo).powi(2);
             }
-            let mut summation = 0.0;
-            for (j, other) in population.genomes.iter().cloned().enumerate() {
-                if i != j {
-                    let distance = compatibility.distance(genome.compatibility_metrics(&other));
-                    let share = distance < compatibility.threshold;
-                    summation += f32::from(share);
-                }
-            }
-            genome.fitness /= summation;
-            species_tree
-                .order
-                .get_mut(genome.species_id)
-                .unwrap()
-                .explicit_fitness_sharing += genome.fitness;
-            species_tree.total_fitness += genome.fitness;
+        }
+        let min_fitness = population
+            .genomes
+            .iter()
+            .min_by(|g, o| g.fitness.partial_cmp(&o.fitness).unwrap());
+        let max_fitness = population
+            .genomes
+            .iter()
+            .max_by(|g, o| g.fitness.partial_cmp(&o.fitness).unwrap());
+        for species in species_tree.order.iter_mut() {
+
         }
         // selection of fittest (top 20% of total population)
         let mut selection = vec![];
@@ -242,6 +238,8 @@ pub(crate) struct Species {
     pub(crate) representative: Genome,
     pub(crate) count: usize,
     pub(crate) explicit_fitness_sharing: f32,
+    pub(crate) max_fitness: f32,
+    pub(crate) last_improvement: usize,
 }
 impl Species {
     pub(crate) fn new(genome: Genome) -> Self {
@@ -250,6 +248,8 @@ impl Species {
             representative: genome,
             count: 0,
             explicit_fitness_sharing: 0.0,
+            max_fitness: 0.0,
+            last_improvement: 0,
         }
     }
 }
