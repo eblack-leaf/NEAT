@@ -25,7 +25,7 @@ fn neat() {
                 if i != j {
                     let distance = compatibility.distance(genome.compatibility_metrics(&other));
                     let share = distance < compatibility.threshold;
-                    summation += distance * f32::from(share);
+                    summation += f32::from(share);
                 }
             }
             genome.fitness /= summation;
