@@ -96,12 +96,19 @@ fn neat() {
                     new_designation = Some(attempted_conversion);
                 }
             }
-            *population.genomes.get_mut(culled).unwrap() = species_tree
+            let mut to_copy_from = species_tree
                 .order
                 .get(new_designation.unwrap())
                 .unwrap()
                 .representative
                 .clone();
+            to_copy_from.id = culled;
+            *population.genomes.get_mut(culled).unwrap() = to_copy_from;
+            species_tree
+                .order
+                .get_mut(new_designation.unwrap())
+                .unwrap()
+                .count += 1;
         }
         population
             .genomes
@@ -115,6 +122,7 @@ fn neat() {
             .cloned()
             .collect::<Vec<Genome>>();
         let mut total_remaining = population.count;
+        let mut g_id = 0;
         for (species_id, species) in species_tree.order.iter().enumerate() {
             if species.count > 0 {
                 let requested_offspring = if species_id + 1 == species_tree.num_active_species() {
@@ -143,8 +151,10 @@ fn neat() {
                                 .unwrap()
                         })
                         .unwrap();
-                    let champion = population.genomes.get(champion_id).unwrap().clone();
+                    let mut champion = population.genomes.get(champion_id).unwrap().clone();
+                    champion.id = g_id;
                     next_gen.push(champion);
+                    g_id += 1;
                     requested_offspring.checked_sub(1).unwrap_or_default()
                 } else {
                     requested_offspring
@@ -165,8 +175,10 @@ fn neat() {
                         .get(rand::thread_rng().gen_range(0..species_selection.len()))
                         .unwrap();
                     let selected = population.genomes.get(selected_id).cloned().unwrap();
-                    let mutated = environment.mutate(selected, &mut existing_innovation);
+                    let mut mutated = environment.mutate(selected, &mut existing_innovation);
+                    mutated.id = g_id;
                     next_gen.push(mutated);
+                    g_id += 1;
                 }
                 for _offspring_request in 0..normal {
                     let parent1 = population
@@ -191,9 +203,10 @@ fn neat() {
                         )
                         .unwrap()
                         .clone();
-                    let crossover = crossover(parent1, parent2);
+                    let crossover = crossover(g_id, parent1, parent2);
                     let mutated_crossover = environment.mutate(crossover, &mut existing_innovation);
                     next_gen.push(mutated_crossover);
+                    g_id += 1;
                 }
             }
         }
@@ -208,8 +221,17 @@ fn neat() {
     }
     println!("evaluation: {:?}", evaluation.history);
 }
-pub(crate) fn crossover(parent1: Genome, parent2: Genome) -> Genome {
-    todo!()
+pub(crate) fn crossover(id: GenomeId, parent1: Genome, parent2: Genome) -> Genome {
+    let child = Genome::new(INPUT_DIM, OUTPUT_DIM, id);
+    let (best_parent, other) = if parent1.fitness == parent2.fitness {
+        (parent1, parent2)
+    } else if parent1.fitness > parent2.fitness {
+        (parent1, parent2)
+    } else {
+        (parent2, parent1)
+    };
+
+    child
 }
 pub(crate) struct Evaluation {
     pub(crate) history: Vec<GenerationMetrics>,
@@ -365,7 +387,64 @@ pub(crate) struct Genome {
 }
 impl Genome {
     pub(crate) fn compatibility_metrics(&self, other: &Self) -> CompatibilityMetrics {
-        todo!()
+        let mut excess = 0;
+        let mut disjoint = 0;
+        let max_innovation = other
+            .connections
+            .iter()
+            .map(|c| c.innovation.idx)
+            .max()
+            .unwrap();
+        for primary in self.connections.iter() {
+            if primary.innovation.idx > max_innovation {
+                excess += 1;
+            } else if other
+                .connections
+                .iter()
+                .find(|secondary| secondary.innovation == primary.innovation)
+                .is_none()
+            {
+                disjoint += 1;
+            }
+        }
+        let max_node_id = other
+            .nodes
+            .iter()
+            .max_by(|a, b| a.id.partial_cmp(&b.id).unwrap())
+            .unwrap()
+            .id;
+        for node in self.nodes.iter() {
+            if node.id > max_node_id {
+                excess += 1;
+            } else if other
+                .nodes
+                .iter()
+                .find(|secondary| secondary.id == node.id)
+                .is_none()
+            {
+                disjoint += 1;
+            }
+        }
+        let n = self.connections.len().max(other.connections.len());
+        let mut num_weights = 0.0;
+        let mut weight_difference = 0.0;
+        for c in self.connections.iter() {
+            if let Some(matching) = other
+                .connections
+                .iter()
+                .find(|b| b.innovation == c.innovation)
+            {
+                weight_difference += c.weight - matching.weight;
+                num_weights += 1.0;
+            }
+        }
+        weight_difference /= num_weights;
+        CompatibilityMetrics {
+            n: n as f32,
+            excess: excess as f32,
+            disjoint: disjoint as f32,
+            weight_difference,
+        }
     }
     pub(crate) fn new(inputs: usize, outputs: usize, id: GenomeId) -> Self {
         let mut local_innovation_for_setup = Innovation::new(0);
