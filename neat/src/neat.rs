@@ -348,21 +348,24 @@ impl Genome {
             for o in 0..outputs {
                 connections.push(Connection::new(
                     i,
-                    o,
+                    inputs + o + 1,
                     rand::thread_rng().gen_range(0.0..1.0),
                     true,
                     local_innovation_for_setup.increment(),
                 ));
             }
         }
-        nodes.push(Node::new(nodes.len(), NodeType::Bias).value(1.0));
-        connections.push(Connection::new(
-            nodes.len().checked_sub(1).unwrap_or_default(),
-            inputs + 1,
-            rand::thread_rng().gen_range(0.0..1.0),
-            true,
-            local_innovation_for_setup.increment(),
-        ));
+        for o in 0..outputs {
+            nodes.push(Node::new(nodes.len(), NodeType::Bias).value(1.0));
+            connections.push(Connection::new(
+                nodes.len().checked_sub(1).unwrap_or_default(),
+                inputs + o + 1,
+                rand::thread_rng().gen_range(0.0..1.0),
+                true,
+                local_innovation_for_setup.increment(),
+            ));
+        }
+
         Self {
             nodes,
             connections,
