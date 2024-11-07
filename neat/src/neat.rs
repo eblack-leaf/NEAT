@@ -87,18 +87,18 @@ fn neat() {
             species_tree.total_fitness += species.explicit_fitness_sharing;
         }
         for culled in culled_organisms {
-            let mut filled = None;
-            while filled.is_none() {
+            let mut new_designation = None;
+            while new_designation.is_none() {
                 let attempted_conversion =
                     rand::thread_rng().gen_range(0..species_tree.order.len());
                 let c = species_tree.order.get(attempted_conversion).unwrap().count;
                 if c > 0 {
-                    filled = Some(attempted_conversion);
+                    new_designation = Some(attempted_conversion);
                 }
             }
             *population.genomes.get_mut(culled).unwrap() = species_tree
                 .order
-                .get(filled.unwrap())
+                .get(new_designation.unwrap())
                 .unwrap()
                 .representative
                 .clone();
