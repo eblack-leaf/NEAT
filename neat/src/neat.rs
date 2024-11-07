@@ -115,9 +115,9 @@ fn neat() {
             .cloned()
             .collect::<Vec<Genome>>();
         let mut total_remaining = population.count;
-        for (i, species) in species_tree.order.iter().enumerate() {
+        for (species_id, species) in species_tree.order.iter().enumerate() {
             if species.count > 0 {
-                let requested_offspring = if i + 1 == species_tree.num_active_species() {
+                let requested_offspring = if species_id + 1 == species_tree.num_active_species() {
                     total_remaining
                 } else {
                     let species_percent =
@@ -154,16 +154,46 @@ fn neat() {
                 let normal = requested_offspring
                     .checked_sub(skip_crossover)
                     .unwrap_or_default();
-                for offspring_request in 0..skip_crossover {
-                    // mutate
-                    // next_gen.push(mutated)
+                let species_selection = species
+                    .current_organisms
+                    .iter()
+                    .filter(|id| selection.iter().find(|s| s.id == **id).is_some())
+                    .cloned()
+                    .collect::<Vec<GenomeId>>();
+                for _offspring_request in 0..skip_crossover {
+                    let selected_id = species_selection
+                        .get(rand::thread_rng().gen_range(0..species_selection.len()))
+                        .unwrap();
+                    let selected = population.genomes.get(selected_id).cloned().unwrap();
+                    let mutated = environment.mutate(selected, &mut existing_innovation);
+                    next_gen.push(mutated);
                 }
-                for offspring_request in 0..normal {
-                    // parent1 = random (from species.nodes)
-                    // parent2 = random (from species.nodes) or environment.interspecies [all]
-                    // crossover
-                    // mutate
-                    // next_gen.push(mutated_crossover);
+                for _offspring_request in 0..normal {
+                    let parent1 = population
+                        .genomes
+                        .get(
+                            *species_selection
+                                .get(rand::thread_rng().gen_range(0..species_selection.len()))
+                                .unwrap(),
+                        )
+                        .unwrap()
+                        .clone();
+                    let parent2 = population
+                        .genomes
+                        .get(
+                            *species_selection
+                                .iter()
+                                .filter(|s| **s != parent1.id)
+                                .cloned()
+                                .collect::<Vec<GenomeId>>()
+                                .get(rand::thread_rng().gen_range(0..species_selection.len()))
+                                .unwrap(),
+                        )
+                        .unwrap()
+                        .clone();
+                    let crossover = crossover(parent1, parent2);
+                    let mutated_crossover = environment.mutate(crossover, &mut existing_innovation);
+                    next_gen.push(mutated_crossover);
                 }
             }
         }
@@ -177,6 +207,9 @@ fn neat() {
         species_tree.speciate(&mut population.genomes, &compatibility);
     }
     println!("evaluation: {:?}", evaluation.history);
+}
+pub(crate) fn crossover(parent1: Genome, parent2: Genome) -> Genome {
+    todo!()
 }
 pub(crate) struct Evaluation {
     pub(crate) history: Vec<GenerationMetrics>,
@@ -516,5 +549,26 @@ impl Environment {
             champion_network_count: 5,
             elitism_percent: 0.3,
         }
+    }
+    pub(crate) fn mutate(
+        &self,
+        mut genome: Genome,
+        existing_innovations: &mut ExistingInnovations,
+    ) -> Genome {
+        if rand::thread_rng().gen_range(0.0..1.0) < self.connection_weight.0 {
+            if rand::thread_rng().gen_range(0.0..1.0) < self.connection_weight.1 {
+                // perturb
+            } else {
+                // give random
+            }
+        }
+        if rand::thread_rng().gen_range(0.0..1.0) < self.add_node {
+            // add node to genome
+        }
+        if rand::thread_rng().gen_range(0.0..1.0) < self.add_connection {
+            // add connection
+            // innovation check
+        }
+        genome
     }
 }
