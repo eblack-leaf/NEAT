@@ -1,6 +1,6 @@
 use rand::Rng;
 use std::cmp::PartialEq;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0]];
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 pub(crate) const INPUT_DIM: usize = 2;
@@ -542,8 +542,43 @@ impl Genome {
         }
     }
     pub(crate) fn activate(&self, inputs: Vec<f32>) -> Vec<f32> {
-        todo!()
+        let input_units = self.nodes.iter().filter(|n| n.ty == NodeType::Input).cloned().collect::<Vec<_>>();
+        let output_units = self.nodes.iter().filter(|n| n.ty == NodeType::Output).cloned().collect::<Vec<_>>();
+        let bias_units = self.nodes.iter().filter(|n| n.ty == NodeType::Bias).cloned().collect::<Vec<_>>();
+        let mut configured = vec![];
+        for n in self.nodes.iter() {
+            let in_genes = self.connections.iter().filter(|c| c.to == n.id && c.enabled).cloned().collect::<Vec<_>>();
+            configured.push((n.clone(), in_genes));
+        }
+        let mut outputs = HashMap::new();
+        for (i, node) in input_units.iter().cloned().enumerate() {
+            outputs.insert(node.id, *inputs.get(i).unwrap());
+        }
+        for node in bias_units {
+            outputs.insert(node.id, 1.0);
+        }
+        let ordered = recursive_order(&self, configured);
+        vec![]
     }
+}
+pub(crate) fn recursive_order(genome: &Genome, configured: Vec<(Node, Vec<Connection>)>) -> Vec<NodeId> {
+    let mut ordered = vec![];
+    let mut visited = HashSet::new();
+    for n in configured.iter() {
+        if !visited.contains(&n.0.id) {
+            let stage_outputs = genome.connections.iter().filter_map(|c| if c.enabled && c.from == n.0.id {
+                Some(genome.nodes.get(c.to).unwrap().clone())
+            } else {
+                None
+            }).collect::<Vec<_>>();
+            for out_node in stage_outputs {
+                if !visited.contains(&out_node.id) {
+                    ordered.extend(recursive_order(genome, configured.clone()));
+                }
+            }
+        }
+    }
+    ordered
 }
 pub(crate) struct Compatibility {
     pub(crate) c1: f32,
