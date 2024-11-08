@@ -63,7 +63,7 @@ fn neat() {
         let fit_range = (max_fitness - min_fitness).max(1.0);
         let mut culled_organisms = vec![];
         for species in species_tree.order.iter_mut() {
-            if species.count == 0 {
+            if species.count == 0 || species.culled {
                 continue;
             }
             let species_max = species
@@ -78,6 +78,7 @@ fn neat() {
             }
             if g > species.last_improvement + environment.stagnation_threshold {
                 species.count = 0;
+                species.culled = true;
                 for s in species.current_organisms.drain(..) {
                     culled_organisms.push(s);
                 }
@@ -125,7 +126,7 @@ fn neat() {
         let mut total_remaining = population.count;
         let mut g_id = 0;
         for (species_id, species) in species_tree.order.iter().enumerate() {
-            if species.count > 0 {
+            if species.count > 0 && !species.culled {
                 let requested_offspring = if species_id + 1 == species_tree.num_active_species() {
                     total_remaining
                 } else {
@@ -522,11 +523,13 @@ impl Genome {
                 ));
             }
         }
+        let mut last = 0;
         for o in 0..outputs {
             nodes.push(Node::new(nodes.len(), NodeType::Bias).value(1.0));
+            last = inputs + o + 1;
             connections.push(Connection::new(
                 nodes.len().checked_sub(1).unwrap_or_default(),
-                inputs + o + 1,
+                last,
                 rand::thread_rng().gen_range(0.0..1.0),
                 true,
                 local_innovation_for_setup.increment(),
@@ -536,79 +539,73 @@ impl Genome {
             nodes,
             connections,
             fitness: 0.0,
-            node_id_generator: inputs + outputs * 2,
+            node_id_generator: last + 1,
             species_id: 0,
             id,
         }
     }
     pub(crate) fn activate(&self, inputs: Vec<f32>) -> Vec<f32> {
-        let input_units = self
-            .nodes
-            .iter()
-            .filter(|n| n.ty == NodeType::Input)
-            .cloned()
-            .collect::<Vec<_>>();
-        let output_units = self
-            .nodes
-            .iter()
-            .filter(|n| n.ty == NodeType::Output)
-            .cloned()
-            .collect::<Vec<_>>();
-        let bias_units = self
-            .nodes
-            .iter()
-            .filter(|n| n.ty == NodeType::Bias)
-            .cloned()
-            .collect::<Vec<_>>();
-        let mut configured = vec![];
-        for n in self.nodes.iter() {
-            let in_genes = self
-                .connections
-                .iter()
-                .filter(|c| c.to == n.id && c.enabled)
-                .cloned()
-                .collect::<Vec<_>>();
-            configured.push((n.clone(), in_genes));
+        let mut outputs = vec![];
+        let ordered = recursive_order(&self);
+        for o in ordered {
+            let node = self.nodes.get(o).unwrap();
+            if node.ty != NodeType::Input && node.ty != NodeType::Bias {
+                let input_ids = self
+                    .connections
+                    .iter()
+                    .filter_map(|c| {
+                        if c.enabled && c.to == node.id {
+                            Some(c.from)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                // use ids to calculate linear-model + sigmoid * SCALE_ACTIVATION
+                // sigmoid(W.dot(X)) * SCALE_ACTIVATION
+            }
         }
-        let mut outputs = HashMap::new();
-        for (i, node) in input_units.iter().cloned().enumerate() {
-            outputs.insert(node.id, *inputs.get(i).unwrap());
-        }
-        for node in bias_units {
-            outputs.insert(node.id, 1.0);
-        }
-        let ordered = recursive_order(&self, configured);
-        // TODO calculate in order to activate linear + sigmoid
-        vec![]
+        outputs
     }
 }
-pub(crate) fn recursive_order(
-    genome: &Genome,
-    configured: Vec<(Node, Vec<Connection>)>,
-) -> Vec<NodeId> {
+pub(crate) fn recursive_order(genome: &Genome) -> Vec<NodeId> {
     let mut ordered = vec![];
     let mut visited = HashSet::new();
-    for n in configured.iter() {
-        if !visited.contains(&n.0.id) {
-            let stage_outputs = genome
-                .connections
-                .iter()
-                .filter_map(|c| {
-                    if c.enabled && c.from == n.0.id {
-                        Some(genome.nodes.get(c.to).unwrap().clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            for out_node in stage_outputs {
-                if !visited.contains(&out_node.id) {
-                    ordered.extend(recursive_order(genome, configured.clone()));
-                }
-            }
+    for n in genome.nodes.iter() {
+        if !visited.contains(&n.id) {
+            let (sub_order, v) = inner_recursion(genome, n.id, visited.clone());
+            visited = v;
+            ordered.extend(sub_order)
         }
     }
     ordered
+}
+pub(crate) fn inner_recursion(
+    genome: &Genome,
+    node_id: NodeId,
+    mut visited: HashSet<NodeId>,
+) -> (Vec<NodeId>, HashSet<NodeId>) {
+    let mut ordered = vec![];
+    visited.insert(node_id);
+    let stage_outputs = genome
+        .connections
+        .iter()
+        .filter_map(|c| {
+            if c.enabled && c.from == node_id {
+                Some(c.to)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    for out_node in stage_outputs {
+        if !visited.contains(&out_node) {
+            let (sub_order, v) = inner_recursion(genome, out_node, visited.clone());
+            visited = v;
+            ordered.extend(sub_order);
+        }
+    }
+    (ordered, visited)
 }
 pub(crate) struct Compatibility {
     pub(crate) c1: f32,
@@ -646,6 +643,7 @@ pub(crate) struct Species {
     pub(crate) explicit_fitness_sharing: f32,
     pub(crate) max_fitness: f32,
     pub(crate) last_improvement: usize,
+    pub(crate) culled: bool,
 }
 impl Species {
     pub(crate) fn new(genome: Genome) -> Self {
@@ -656,6 +654,7 @@ impl Species {
             explicit_fitness_sharing: 0.0,
             max_fitness: 0.0,
             last_improvement: 0,
+            culled: false,
         }
     }
 }
@@ -688,6 +687,9 @@ impl SpeciesTree {
         for genome in population.iter_mut() {
             let mut found = None;
             for (i, species) in self.order.iter().enumerate() {
+                if species.culled {
+                    continue;
+                }
                 let distance =
                     compatibility.distance(genome.compatibility_metrics(&species.representative));
                 if distance < compatibility.threshold {
@@ -767,7 +769,8 @@ impl Environment {
             }
         }
         if rand::thread_rng().gen_range(0.0..1.0) < self.add_node {
-            let new_node = Node::new(0, NodeType::Hidden);
+            let new_node = Node::new(genome.node_id_generator, NodeType::Hidden);
+            genome.node_id_generator += 1;
             let idx = rand::thread_rng().gen_range(0..genome.connections.len());
             let existing_connection = genome.connections.get(idx).unwrap().clone();
             genome.connections.get_mut(idx).unwrap().enabled = false;
