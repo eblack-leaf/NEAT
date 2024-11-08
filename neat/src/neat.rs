@@ -174,7 +174,7 @@ fn neat() {
                     let selected_id = species_selection
                         .get(rand::thread_rng().gen_range(0..species_selection.len()))
                         .unwrap();
-                    let selected = population.genomes.get(selected_id).cloned().unwrap();
+                    let selected = population.genomes.get(*selected_id).cloned().unwrap();
                     let mut mutated = environment.mutate(selected, &mut existing_innovation);
                     mutated.id = g_id;
                     next_gen.push(mutated);
