@@ -728,13 +728,13 @@ impl Environment {
                 .nodes
                 .iter()
                 .filter(|n| n.ty != NodeType::Output)
-                .clone()
+                .cloned()
                 .collect::<Vec<Node>>();
             let potential_outputs = genome
                 .nodes
                 .iter()
                 .filter(|n| n.ty != NodeType::Input && n.ty != NodeType::Bias)
-                .clone()
+                .cloned()
                 .collect::<Vec<Node>>();
             let selected_input = potential_inputs
                 .get(rand::thread_rng().gen_range(0..potential_inputs.len()))
