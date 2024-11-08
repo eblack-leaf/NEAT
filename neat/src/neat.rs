@@ -477,7 +477,6 @@ impl Genome {
                 local_innovation_for_setup.increment(),
             ));
         }
-
         Self {
             nodes,
             connections,
