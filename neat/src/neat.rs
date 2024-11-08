@@ -542,12 +542,32 @@ impl Genome {
         }
     }
     pub(crate) fn activate(&self, inputs: Vec<f32>) -> Vec<f32> {
-        let input_units = self.nodes.iter().filter(|n| n.ty == NodeType::Input).cloned().collect::<Vec<_>>();
-        let output_units = self.nodes.iter().filter(|n| n.ty == NodeType::Output).cloned().collect::<Vec<_>>();
-        let bias_units = self.nodes.iter().filter(|n| n.ty == NodeType::Bias).cloned().collect::<Vec<_>>();
+        let input_units = self
+            .nodes
+            .iter()
+            .filter(|n| n.ty == NodeType::Input)
+            .cloned()
+            .collect::<Vec<_>>();
+        let output_units = self
+            .nodes
+            .iter()
+            .filter(|n| n.ty == NodeType::Output)
+            .cloned()
+            .collect::<Vec<_>>();
+        let bias_units = self
+            .nodes
+            .iter()
+            .filter(|n| n.ty == NodeType::Bias)
+            .cloned()
+            .collect::<Vec<_>>();
         let mut configured = vec![];
         for n in self.nodes.iter() {
-            let in_genes = self.connections.iter().filter(|c| c.to == n.id && c.enabled).cloned().collect::<Vec<_>>();
+            let in_genes = self
+                .connections
+                .iter()
+                .filter(|c| c.to == n.id && c.enabled)
+                .cloned()
+                .collect::<Vec<_>>();
             configured.push((n.clone(), in_genes));
         }
         let mut outputs = HashMap::new();
@@ -558,19 +578,29 @@ impl Genome {
             outputs.insert(node.id, 1.0);
         }
         let ordered = recursive_order(&self, configured);
+        // TODO calculate in order to activate linear + sigmoid
         vec![]
     }
 }
-pub(crate) fn recursive_order(genome: &Genome, configured: Vec<(Node, Vec<Connection>)>) -> Vec<NodeId> {
+pub(crate) fn recursive_order(
+    genome: &Genome,
+    configured: Vec<(Node, Vec<Connection>)>,
+) -> Vec<NodeId> {
     let mut ordered = vec![];
     let mut visited = HashSet::new();
     for n in configured.iter() {
         if !visited.contains(&n.0.id) {
-            let stage_outputs = genome.connections.iter().filter_map(|c| if c.enabled && c.from == n.0.id {
-                Some(genome.nodes.get(c.to).unwrap().clone())
-            } else {
-                None
-            }).collect::<Vec<_>>();
+            let stage_outputs = genome
+                .connections
+                .iter()
+                .filter_map(|c| {
+                    if c.enabled && c.from == n.0.id {
+                        Some(genome.nodes.get(c.to).unwrap().clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
             for out_node in stage_outputs {
                 if !visited.contains(&out_node.id) {
                     ordered.extend(recursive_order(genome, configured.clone()));
