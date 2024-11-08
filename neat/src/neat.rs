@@ -1,4 +1,5 @@
 use rand::Rng;
+use std::cmp::PartialEq;
 use std::collections::HashMap;
 pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0]];
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
@@ -203,7 +204,7 @@ fn neat() {
                         )
                         .unwrap()
                         .clone();
-                    let crossover = crossover(g_id, parent1, parent2);
+                    let crossover = crossover(g_id, parent1, parent2, &environment);
                     let mutated_crossover = environment.mutate(crossover, &mut existing_innovation);
                     next_gen.push(mutated_crossover);
                     g_id += 1;
@@ -221,8 +222,13 @@ fn neat() {
     }
     println!("evaluation: {:?}", evaluation.history);
 }
-pub(crate) fn crossover(id: GenomeId, parent1: Genome, parent2: Genome) -> Genome {
-    let child = Genome::new(INPUT_DIM, OUTPUT_DIM, id);
+pub(crate) fn crossover(
+    id: GenomeId,
+    parent1: Genome,
+    parent2: Genome,
+    environment: &Environment,
+) -> Genome {
+    let mut child = Genome::blank(id);
     let (best_parent, other) = if parent1.fitness == parent2.fitness {
         (parent1, parent2)
     } else if parent1.fitness > parent2.fitness {
@@ -230,7 +236,46 @@ pub(crate) fn crossover(id: GenomeId, parent1: Genome, parent2: Genome) -> Genom
     } else {
         (parent2, parent1)
     };
-
+    for c in best_parent.connections.iter() {
+        let mut gene = c.clone();
+        let mut nodes = (None, None);
+        nodes.0 = Some(best_parent.nodes.get(gene.from).unwrap().clone());
+        nodes.1 = Some(best_parent.nodes.get(gene.to).unwrap().clone());
+        if let Some(matching) = other
+            .connections
+            .iter()
+            .find(|b| b.innovation == c.innovation)
+        {
+            if rand::thread_rng().gen_range(0.0..1.0) < 0.5 {
+                gene = matching.clone();
+                nodes.0 = Some(other.nodes.get(gene.from).unwrap().clone());
+                nodes.1 = Some(other.nodes.get(gene.to).unwrap().clone());
+            }
+        }
+        if !gene.enabled {
+            let should_enable =
+                rand::thread_rng().gen_range(0.0..1.0) < environment.reenable_gene || c.enabled;
+            gene.enabled = should_enable;
+        }
+        child.connections.push(gene.clone());
+        if child.nodes.iter().find(|n| n.id == gene.from).is_none() {
+            child.nodes.push(nodes.0.unwrap().clone());
+        }
+        if child.nodes.iter().find(|n| n.id == gene.to).is_none() {
+            child.nodes.push(nodes.1.unwrap().clone());
+        }
+    }
+    for n in best_parent.nodes.iter() {
+        let mut gene = n.clone();
+        if let Some(matching) = other.nodes.iter().find(|o| o.id == n.id) {
+            if rand::thread_rng().gen_range(0.0..1.0) < 0.5 {
+                gene = matching.clone();
+            }
+        }
+        if child.nodes.iter().find(|cn| cn.id == gene.id).is_none() {
+            child.nodes.push(gene.clone());
+        }
+    }
     child
 }
 pub(crate) struct Evaluation {
@@ -305,7 +350,7 @@ impl Population {
     }
 }
 pub(crate) type NodeId = usize;
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum NodeType {
     Input,
     Hidden,
@@ -386,6 +431,16 @@ pub(crate) struct Genome {
     pub(crate) id: GenomeId,
 }
 impl Genome {
+    pub(crate) fn blank(id: GenomeId) -> Self {
+        Self {
+            nodes: vec![],
+            connections: vec![],
+            fitness: 0.0,
+            node_id_generator: 0,
+            species_id: 0,
+            id,
+        }
+    }
     pub(crate) fn compatibility_metrics(&self, other: &Self) -> CompatibilityMetrics {
         let mut excess = 0;
         let mut disjoint = 0;
@@ -613,7 +668,9 @@ pub(crate) struct Environment {
     pub(crate) stagnation_threshold: usize,
     pub(crate) champion_network_count: usize,
     pub(crate) elitism_percent: f32,
+    pub(crate) reenable_gene: f32,
 }
+
 impl Environment {
     pub(crate) fn new() -> Self {
         Self {
@@ -626,6 +683,7 @@ impl Environment {
             stagnation_threshold: 15,
             champion_network_count: 5,
             elitism_percent: 0.3,
+            reenable_gene: 0.25,
         }
     }
     pub(crate) fn mutate(
@@ -633,20 +691,125 @@ impl Environment {
         mut genome: Genome,
         existing_innovations: &mut ExistingInnovations,
     ) -> Genome {
-        if rand::thread_rng().gen_range(0.0..1.0) < self.connection_weight.0 {
-            if rand::thread_rng().gen_range(0.0..1.0) < self.connection_weight.1 {
-                // perturb
-            } else {
-                // give random
+        for c in genome.connections.iter_mut() {
+            if rand::thread_rng().gen_range(0.0..1.0) < self.connection_weight.0 {
+                if rand::thread_rng().gen_range(0.0..1.0) < self.connection_weight.1 {
+                    let perturb = rand::thread_rng().gen_range(-1.0..1.0);
+                    c.weight += perturb;
+                } else {
+                    c.weight = rand::thread_rng().gen_range(0.0..1.0);
+                }
             }
         }
         if rand::thread_rng().gen_range(0.0..1.0) < self.add_node {
-            // add node to genome
+            let new_node = Node::new(0, NodeType::Hidden);
+            let idx = rand::thread_rng().gen_range(0..genome.connections.len());
+            let existing_connection = genome.connections.get(idx).unwrap().clone();
+            genome.connections.get_mut(idx).unwrap().enabled = false;
+            let new_first = Connection::new(
+                existing_connection.from,
+                new_node.id,
+                1.0,
+                true,
+                existing_innovations.checked_innovation(existing_connection.from, new_node.id),
+            );
+            let new_second = Connection::new(
+                new_node.id,
+                existing_connection.to,
+                existing_connection.weight,
+                true,
+                existing_innovations.checked_innovation(new_node.id, existing_connection.to),
+            );
+            genome.connections.push(new_first);
+            genome.connections.push(new_second);
         }
         if rand::thread_rng().gen_range(0.0..1.0) < self.add_connection {
-            // add connection
-            // innovation check
+            let potential_inputs = genome
+                .nodes
+                .iter()
+                .filter(|n| n.ty != NodeType::Output)
+                .clone()
+                .collect::<Vec<Node>>();
+            let potential_outputs = genome
+                .nodes
+                .iter()
+                .filter(|n| n.ty != NodeType::Input && n.ty != NodeType::Bias)
+                .clone()
+                .collect::<Vec<Node>>();
+            let selected_input = potential_inputs
+                .get(rand::thread_rng().gen_range(0..potential_inputs.len()))
+                .cloned()
+                .unwrap();
+            let selected_output = potential_outputs
+                .get(rand::thread_rng().gen_range(0..potential_outputs.len()))
+                .cloned()
+                .unwrap();
+            if creates_cycle(selected_input.id, selected_output.id, &genome) {
+                return genome;
+            }
+            if genome
+                .connections
+                .iter()
+                .find(|c| {
+                    c.from == selected_input.id && c.to == selected_output.id
+                        || c.from == selected_output.id && c.to == selected_input.id
+                })
+                .is_none()
+            {
+                genome.connections.push(Connection::new(
+                    selected_input.id,
+                    selected_output.id,
+                    rand::thread_rng().gen_range(0.0..1.0),
+                    true,
+                    existing_innovations.checked_innovation(selected_input.id, selected_output.id),
+                ));
+                if genome
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == selected_input.id)
+                    .is_none()
+                {
+                    genome.nodes.push(selected_input);
+                }
+                if genome
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == selected_output.id)
+                    .is_none()
+                {
+                    genome.nodes.push(selected_output);
+                }
+            }
         }
         genome
     }
+}
+pub(crate) fn creates_cycle(
+    selected_input_id: NodeId,
+    selected_output_id: NodeId,
+    genome: &Genome,
+) -> bool {
+    if selected_input_id == selected_output_id {
+        return true;
+    }
+    let mut visited = vec![selected_output_id];
+    while true {
+        let mut num_added = 0;
+        for c in genome.connections.iter() {
+            if visited.iter().find(|v| **v == c.from).is_some()
+                && visited.iter().find(|v| **v == c.to).is_none()
+            {
+                if c.to == selected_output_id {
+                    return true;
+                } else {
+                    visited.push(c.to);
+                    num_added += 1;
+                }
+            }
+        }
+        if num_added == 0 {
+            return false;
+        }
+    }
+    false
 }
