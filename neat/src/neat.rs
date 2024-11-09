@@ -47,7 +47,7 @@ pub(crate) fn neat() {
                 species_tree.clone(),
                 population.genomes.clone(),
             ));
-            println!("evaluation: {:?}", evaluation.history);
+            println!("evaluation: {:?}", evaluation.history.last().unwrap().best_genome.fitness);
             return;
         }
         let min_fitness = population
@@ -222,7 +222,7 @@ pub(crate) fn neat() {
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
     }
-    println!("evaluation: {:?}", evaluation.history);
+    println!("evaluation: {:?}", evaluation.history.last().unwrap().best_genome.fitness);
 }
 pub(crate) fn crossover(
     id: GenomeId,
@@ -564,9 +564,9 @@ impl Genome {
         for i in (inputs.len() + OUTPUT_DIM)..(inputs.len() + 2 * OUTPUT_DIM) {
             staged_output.insert(i, 1.0);
         }
-        // println!("-------------------------------------------------------------------------------");
+        println!("-------------------------------------------------------------------------------");
         // println!("unordered: {:?}", self.nodes);
-        // println!("ordered: {:?}", ordered);
+        println!("ordered: {:?}", ordered);
         for o in ordered {
             // println!("getting ordered node: {}", o);
             let node = self.nodes.get(o).unwrap();
@@ -585,11 +585,14 @@ impl Genome {
                         }
                     })
                     .collect::<Vec<_>>();
-                // println!("input-ids: {:?} for {:?}", input_ids, o);
+                println!("input-ids: {:?} for {:?}", input_ids, o);
                 let stage_input = input_ids
                     .iter()
                     .map(|id| {
-                        // println!("getting-staged: {}", id);
+                        println!("getting-staged: {}", id);
+                        if staged_output.get(id).is_none() {
+                            println!("invalid-nodes: {:?} w/ connections: {:?}", self.nodes, self.connections);
+                        }
                         staged_output.get(id).unwrap().clone()
                     })
                     .collect::<Vec<f32>>();
@@ -598,6 +601,7 @@ impl Genome {
                     let w = W.get(i).unwrap();
                     out += *w * *x;
                 }
+                println!("setting staged: {}", o);
                 staged_output.insert(o, sigmoid(out * ACTIVATION_SCALE));
             }
         }
@@ -785,7 +789,7 @@ impl Environment {
             interspecies: 0.001,
             add_node: 0.03,
             add_connection: 0.05,
-            stagnation_threshold: 15,
+            stagnation_threshold: 500,
             champion_network_count: 5,
             elitism_percent: 0.3,
             reenable_gene: 0.25,
