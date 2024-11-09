@@ -8,8 +8,9 @@ pub(crate) const OUTPUT_DIM: usize = 1;
 pub(crate) const POPULATION_COUNT: usize = 150;
 pub(crate) const GENERATIONS: usize = 300;
 pub(crate) const FITNESS_THRESHOLD: f32 = 3.9;
-#[test]
-fn neat() {
+pub(crate) const ACTIVATION_SCALE: f32 = 4.9;
+
+pub(crate) fn neat() {
     let mut population = Population::new(INPUT_DIM, OUTPUT_DIM, POPULATION_COUNT);
     let compatibility = Compatibility::new(1.0, 1.0, 0.4, 3.0);
     let perfect_fitness = 1.0 * XOR_INPUT.len() as f32;
@@ -173,9 +174,8 @@ fn neat() {
                     .cloned()
                     .collect::<Vec<GenomeId>>();
                 for _offspring_request in 0..skip_crossover {
-                    let selected_id = species_selection
-                        .get(rand::thread_rng().gen_range(0..species_selection.len()))
-                        .unwrap();
+                    let rand_idx = rand::thread_rng().gen_range(0..species_selection.len());
+                    let selected_id = species_selection.get(rand_idx).unwrap();
                     let selected = population.genomes.get(*selected_id).cloned().unwrap();
                     let mut mutated = environment.mutate(selected, &mut existing_innovation);
                     mutated.id = g_id;
@@ -183,28 +183,20 @@ fn neat() {
                     g_id += 1;
                 }
                 for _offspring_request in 0..normal {
-                    let parent1 = population
-                        .genomes
-                        .get(
-                            *species_selection
-                                .get(rand::thread_rng().gen_range(0..species_selection.len()))
-                                .unwrap(),
-                        )
-                        .unwrap()
-                        .clone();
-                    let parent2 = population
-                        .genomes
-                        .get(
-                            *species_selection
-                                .iter()
-                                .filter(|s| **s != parent1.id)
-                                .cloned()
-                                .collect::<Vec<GenomeId>>()
-                                .get(rand::thread_rng().gen_range(0..species_selection.len()))
-                                .unwrap(),
-                        )
-                        .unwrap()
-                        .clone();
+                    let parent1_idx = rand::thread_rng().gen_range(0..species_selection.len());
+                    let parent1_genome_idx = *species_selection.get(parent1_idx).unwrap();
+                    let parent1 = population.genomes.get(parent1_genome_idx).unwrap().clone();
+                    let mut parent2_idx = parent1_idx;
+                    while parent2_idx == parent1_idx && species.count > 1 {
+                        parent2_idx = rand::thread_rng().gen_range(0..species_selection.len());
+                    }
+                    let parent2_genome_idx = *species_selection
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<GenomeId>>()
+                        .get(parent2_idx)
+                        .unwrap();
+                    let parent2 = population.genomes.get(parent2_genome_idx).unwrap().clone();
                     let crossover = crossover(g_id, parent1, parent2, &environment);
                     let mutated_crossover = environment.mutate(crossover, &mut existing_innovation);
                     next_gen.push(mutated_crossover);
@@ -212,12 +204,14 @@ fn neat() {
                 }
             }
         }
-        evaluation.history.push(GenerationMetrics::new(
+        let metrics = GenerationMetrics::new(
             best_genome,
             g,
             species_tree.clone(),
             population.genomes.clone(),
-        ));
+        );
+        println!("metrics: {:?}", metrics);
+        evaluation.history.push(metrics);
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
     }
@@ -300,7 +294,17 @@ pub(crate) struct ExistingInnovations {
 impl ExistingInnovations {
     pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
         Self {
-            set: Default::default(),
+            set: {
+                let mut set = HashMap::new();
+                let mut innov = 0;
+                for i in 0..inputs {
+                    for o in inputs..(inputs + outputs) {
+                        set.insert((i, o), Innovation::new(innov));
+                        innov += 1;
+                    }
+                }
+                set
+            },
             current: Innovation::new(inputs * outputs + 1),
         }
     }
@@ -514,19 +518,21 @@ impl Genome {
         let mut connections = vec![];
         for i in 0..inputs {
             for o in 0..outputs {
+                let output_id = inputs + o;
+                let innovation = local_innovation_for_setup.increment();
                 connections.push(Connection::new(
                     i,
-                    inputs + o + 1,
+                    output_id,
                     rand::thread_rng().gen_range(0.0..1.0),
                     true,
-                    local_innovation_for_setup.increment(),
+                    innovation,
                 ));
             }
         }
         let mut last = 0;
         for o in 0..outputs {
             nodes.push(Node::new(nodes.len(), NodeType::Bias).value(1.0));
-            last = inputs + o + 1;
+            last = inputs + outputs + o;
             connections.push(Connection::new(
                 nodes.len().checked_sub(1).unwrap_or_default(),
                 last,
@@ -547,23 +553,43 @@ impl Genome {
     pub(crate) fn activate(&self, inputs: Vec<f32>) -> Vec<f32> {
         let mut outputs = vec![];
         let ordered = recursive_order(&self);
+        let mut staged_output = HashMap::new();
+        for (i, d) in inputs.iter().enumerate() {
+            staged_output.insert(i, *d);
+        }
+        for i in (inputs.len() + OUTPUT_DIM)..(inputs.len() + 2 * OUTPUT_DIM) {
+            staged_output.insert(i, 1.0);
+        }
         for o in ordered {
             let node = self.nodes.get(o).unwrap();
+            let mut W = vec![];
             if node.ty != NodeType::Input && node.ty != NodeType::Bias {
                 let input_ids = self
                     .connections
                     .iter()
                     .filter_map(|c| {
                         if c.enabled && c.to == node.id {
+                            W.push(c.weight);
                             Some(c.from)
                         } else {
                             None
                         }
                     })
                     .collect::<Vec<_>>();
-                // use ids to calculate linear-model + sigmoid * SCALE_ACTIVATION
-                // sigmoid(W.dot(X)) * SCALE_ACTIVATION
+                let stage_input = input_ids
+                    .iter()
+                    .map(|id| staged_output.get(id).unwrap().clone())
+                    .collect::<Vec<f32>>();
+                let mut out = 0.0;
+                for (i, x) in stage_input.iter().enumerate() {
+                    let w = W.get(i).unwrap();
+                    out += *w * *x;
+                }
+                staged_output.insert(o, sigmoid(out * ACTIVATION_SCALE));
             }
+        }
+        for i in inputs.len()..(inputs.len() + OUTPUT_DIM) {
+            outputs.push(staged_output.get(&i).unwrap().clone());
         }
         outputs
     }
@@ -605,6 +631,7 @@ pub(crate) fn inner_recursion(
             ordered.extend(sub_order);
         }
     }
+    ordered.push(node_id);
     (ordered, visited)
 }
 pub(crate) struct Compatibility {

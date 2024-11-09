@@ -3,6 +3,9 @@ name = "neat"
 version = "0.1.0"
 edition = "2021"
 
+[profile.test]
+debug = true
+
 [dependencies]
 foliage = { path = "../../foliage/foliage" }
 rand = "0.8.5"
