@@ -210,7 +210,7 @@ pub(crate) fn neat() {
             species_tree.clone(),
             population.genomes.clone(),
         );
-        println!("metrics: {:?}", metrics);
+        println!("metrics: {:?}", metrics.best_genome);
         evaluation.history.push(metrics);
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
@@ -254,9 +254,11 @@ pub(crate) fn crossover(
         }
         child.connections.push(gene.clone());
         if child.nodes.iter().find(|n| n.id == gene.from).is_none() {
+            child.node_id_generator += 1;
             child.nodes.push(nodes.0.unwrap().clone());
         }
         if child.nodes.iter().find(|n| n.id == gene.to).is_none() {
+            child.node_id_generator += 1;
             child.nodes.push(nodes.1.unwrap().clone());
         }
     }
@@ -268,6 +270,7 @@ pub(crate) fn crossover(
             }
         }
         if child.nodes.iter().find(|cn| cn.id == gene.id).is_none() {
+            child.node_id_generator += 1;
             child.nodes.push(gene.clone());
         }
     }
@@ -298,6 +301,12 @@ impl ExistingInnovations {
                 let mut set = HashMap::new();
                 let mut innov = 0;
                 for i in 0..inputs {
+                    for o in inputs..(inputs + outputs) {
+                        set.insert((i, o), Innovation::new(innov));
+                        innov += 1;
+                    }
+                }
+                for i in (inputs + outputs)..(inputs + outputs * 2) {
                     for o in inputs..(inputs + outputs) {
                         set.insert((i, o), Innovation::new(innov));
                         innov += 1;
@@ -530,16 +539,18 @@ impl Genome {
             }
         }
         let mut last = 0;
-        for o in 0..outputs {
-            nodes.push(Node::new(nodes.len(), NodeType::Bias).value(1.0));
-            last = inputs + outputs + o;
-            connections.push(Connection::new(
-                nodes.len().checked_sub(1).unwrap_or_default(),
-                last,
-                rand::thread_rng().gen_range(0.0..1.0),
-                true,
-                local_innovation_for_setup.increment(),
-            ));
+        for i in (inputs + outputs)..(inputs + outputs * 2) {
+            for o in inputs..(inputs + outputs) {
+                nodes.push(Node::new(i, NodeType::Bias).value(1.0));
+                connections.push(Connection::new(
+                    i,
+                    o,
+                    rand::thread_rng().gen_range(0.0..1.0),
+                    true,
+                    local_innovation_for_setup.increment(),
+                ));
+                last = i;
+            }
         }
         Self {
             nodes,
@@ -560,6 +571,7 @@ impl Genome {
         for i in (inputs.len() + OUTPUT_DIM)..(inputs.len() + 2 * OUTPUT_DIM) {
             staged_output.insert(i, 1.0);
         }
+        println!("ordered: {:?}", ordered);
         for o in ordered {
             let node = self.nodes.get(o).unwrap();
             let mut W = vec![];
@@ -576,6 +588,7 @@ impl Genome {
                         }
                     })
                     .collect::<Vec<_>>();
+                println!("input-ids: {:?} for {:?}", input_ids, o);
                 let stage_input = input_ids
                     .iter()
                     .map(|id| staged_output.get(id).unwrap().clone())
@@ -588,6 +601,7 @@ impl Genome {
                 staged_output.insert(o, sigmoid(out * ACTIVATION_SCALE));
             }
         }
+        println!("staged: {:?}", staged_output);
         for i in inputs.len()..(inputs.len() + OUTPUT_DIM) {
             outputs.push(staged_output.get(&i).unwrap().clone());
         }
@@ -798,6 +812,7 @@ impl Environment {
         if rand::thread_rng().gen_range(0.0..1.0) < self.add_node {
             let new_node = Node::new(genome.node_id_generator, NodeType::Hidden);
             genome.node_id_generator += 1;
+            println!("id-gen: {}", genome.node_id_generator);
             let idx = rand::thread_rng().gen_range(0..genome.connections.len());
             let existing_connection = genome.connections.get(idx).unwrap().clone();
             genome.connections.get_mut(idx).unwrap().enabled = false;
@@ -815,7 +830,9 @@ impl Environment {
                 true,
                 existing_innovations.checked_innovation(new_node.id, existing_connection.to),
             );
+            println!("adding first: {:?}", new_first);
             genome.connections.push(new_first);
+            println!("adding second: {:?}", new_second);
             genome.connections.push(new_second);
         }
         if rand::thread_rng().gen_range(0.0..1.0) < self.add_connection {
@@ -842,22 +859,20 @@ impl Environment {
             if creates_cycle(selected_input.id, selected_output.id, &genome) {
                 return genome;
             }
-            if genome
-                .connections
-                .iter()
-                .find(|c| {
-                    c.from == selected_input.id && c.to == selected_output.id
-                        || c.from == selected_output.id && c.to == selected_input.id
-                })
-                .is_none()
-            {
-                genome.connections.push(Connection::new(
+            let predicate_found = genome.connections.iter().find(|c| {
+                c.from == selected_input.id && c.to == selected_output.id
+                    || c.from == selected_output.id && c.to == selected_input.id
+            });
+            if predicate_found.is_none() {
+                let connection = Connection::new(
                     selected_input.id,
                     selected_output.id,
                     rand::thread_rng().gen_range(0.0..1.0),
                     true,
                     existing_innovations.checked_innovation(selected_input.id, selected_output.id),
-                ));
+                );
+                println!("creating: {:?}", connection);
+                genome.connections.push(connection);
                 if genome
                     .nodes
                     .iter()
