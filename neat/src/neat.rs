@@ -47,7 +47,8 @@ pub(crate) fn neat() {
                 species_tree.clone(),
                 population.genomes.clone(),
             ));
-            break;
+            println!("evaluation: {:?}", evaluation.history);
+            return;
         }
         let min_fitness = population
             .genomes
@@ -63,6 +64,7 @@ pub(crate) fn neat() {
             .fitness;
         let fit_range = (max_fitness - min_fitness).max(1.0);
         let mut culled_organisms = vec![];
+        let mut current_active_species = species_tree.num_active_species();
         for species in species_tree.order.iter_mut() {
             if species.count == 0 || species.culled {
                 continue;
@@ -78,6 +80,11 @@ pub(crate) fn neat() {
                 species.last_improvement = g;
             }
             if g > species.last_improvement + environment.stagnation_threshold {
+                current_active_species -= 1;
+                if current_active_species == 0 {
+                    println!("all species culled");
+                    return;
+                }
                 species.count = 0;
                 species.culled = true;
                 for s in species.current_organisms.drain(..) {
@@ -210,7 +217,7 @@ pub(crate) fn neat() {
             species_tree.clone(),
             population.genomes.clone(),
         );
-        println!("metrics: {:?}", metrics.best_genome);
+        println!("metrics: {:?} @ {}", metrics.best_genome.fitness, g);
         evaluation.history.push(metrics);
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
@@ -224,6 +231,7 @@ pub(crate) fn crossover(
     environment: &Environment,
 ) -> Genome {
     let mut child = Genome::blank(id);
+
     let (best_parent, other) = if parent1.fitness == parent2.fitness {
         (parent1, parent2)
     } else if parent1.fitness > parent2.fitness {
@@ -231,6 +239,8 @@ pub(crate) fn crossover(
     } else {
         (parent2, parent1)
     };
+    child.nodes.resize(best_parent.nodes.len(), Node::new(NodeId::MAX, NodeType::Hidden));
+    child.node_id_generator = best_parent.nodes.len();
     for c in best_parent.connections.iter() {
         let mut gene = c.clone();
         let mut nodes = (None, None);
@@ -253,26 +263,9 @@ pub(crate) fn crossover(
             gene.enabled = should_enable;
         }
         child.connections.push(gene.clone());
-        if child.nodes.iter().find(|n| n.id == gene.from).is_none() {
-            child.node_id_generator += 1;
-            child.nodes.push(nodes.0.unwrap().clone());
-        }
-        if child.nodes.iter().find(|n| n.id == gene.to).is_none() {
-            child.node_id_generator += 1;
-            child.nodes.push(nodes.1.unwrap().clone());
-        }
-    }
-    for n in best_parent.nodes.iter() {
-        let mut gene = n.clone();
-        if let Some(matching) = other.nodes.iter().find(|o| o.id == n.id) {
-            if rand::thread_rng().gen_range(0.0..1.0) < 0.5 {
-                gene = matching.clone();
-            }
-        }
-        if child.nodes.iter().find(|cn| cn.id == gene.id).is_none() {
-            child.node_id_generator += 1;
-            child.nodes.push(gene.clone());
-        }
+        *child.nodes.get_mut(gene.from).unwrap() = nodes.0.unwrap();
+        *child.nodes.get_mut(gene.to).unwrap() = nodes.1.unwrap();
+        // println!("adding gene: {:?}", gene);
     }
     child
 }
@@ -571,9 +564,13 @@ impl Genome {
         for i in (inputs.len() + OUTPUT_DIM)..(inputs.len() + 2 * OUTPUT_DIM) {
             staged_output.insert(i, 1.0);
         }
-        println!("ordered: {:?}", ordered);
+        // println!("-------------------------------------------------------------------------------");
+        // println!("unordered: {:?}", self.nodes);
+        // println!("ordered: {:?}", ordered);
         for o in ordered {
+            // println!("getting ordered node: {}", o);
             let node = self.nodes.get(o).unwrap();
+            // println!("ordered-node: {:?}", node);
             let mut W = vec![];
             if node.ty != NodeType::Input && node.ty != NodeType::Bias {
                 let input_ids = self
@@ -588,10 +585,13 @@ impl Genome {
                         }
                     })
                     .collect::<Vec<_>>();
-                println!("input-ids: {:?} for {:?}", input_ids, o);
+                // println!("input-ids: {:?} for {:?}", input_ids, o);
                 let stage_input = input_ids
                     .iter()
-                    .map(|id| staged_output.get(id).unwrap().clone())
+                    .map(|id| {
+                        // println!("getting-staged: {}", id);
+                        staged_output.get(id).unwrap().clone()
+                    })
                     .collect::<Vec<f32>>();
                 let mut out = 0.0;
                 for (i, x) in stage_input.iter().enumerate() {
@@ -601,7 +601,7 @@ impl Genome {
                 staged_output.insert(o, sigmoid(out * ACTIVATION_SCALE));
             }
         }
-        println!("staged: {:?}", staged_output);
+        // println!("staged: {:?}", staged_output);
         for i in inputs.len()..(inputs.len() + OUTPUT_DIM) {
             outputs.push(staged_output.get(&i).unwrap().clone());
         }
@@ -613,9 +613,7 @@ pub(crate) fn recursive_order(genome: &Genome) -> Vec<NodeId> {
     let mut visited = HashSet::new();
     for n in genome.nodes.iter() {
         if !visited.contains(&n.id) {
-            let (sub_order, v) = inner_recursion(genome, n.id, visited.clone());
-            visited = v;
-            ordered.extend(sub_order)
+            inner_recursion(genome, n.id, &mut visited, &mut ordered);
         }
     }
     ordered
@@ -623,16 +621,16 @@ pub(crate) fn recursive_order(genome: &Genome) -> Vec<NodeId> {
 pub(crate) fn inner_recursion(
     genome: &Genome,
     node_id: NodeId,
-    mut visited: HashSet<NodeId>,
-) -> (Vec<NodeId>, HashSet<NodeId>) {
-    let mut ordered = vec![];
+    visited: &mut HashSet<NodeId>,
+    ordered: &mut Vec<NodeId>,
+) {
     visited.insert(node_id);
     let stage_outputs = genome
         .connections
         .iter()
         .filter_map(|c| {
-            if c.enabled && c.from == node_id {
-                Some(c.to)
+            if c.enabled && c.to == node_id {
+                Some(c.from)
             } else {
                 None
             }
@@ -640,13 +638,12 @@ pub(crate) fn inner_recursion(
         .collect::<Vec<_>>();
     for out_node in stage_outputs {
         if !visited.contains(&out_node) {
-            let (sub_order, v) = inner_recursion(genome, out_node, visited.clone());
-            visited = v;
-            ordered.extend(sub_order);
+            // println!("processing out-node: {}", out_node);
+            inner_recursion(genome, out_node, visited, ordered);
         }
     }
+    // println!("adding original-node: {}", node_id);
     ordered.push(node_id);
-    (ordered, visited)
 }
 pub(crate) struct Compatibility {
     pub(crate) c1: f32,
@@ -812,7 +809,7 @@ impl Environment {
         if rand::thread_rng().gen_range(0.0..1.0) < self.add_node {
             let new_node = Node::new(genome.node_id_generator, NodeType::Hidden);
             genome.node_id_generator += 1;
-            println!("id-gen: {}", genome.node_id_generator);
+            // println!("id-gen: {}", genome.node_id_generator);
             let idx = rand::thread_rng().gen_range(0..genome.connections.len());
             let existing_connection = genome.connections.get(idx).unwrap().clone();
             genome.connections.get_mut(idx).unwrap().enabled = false;
@@ -830,10 +827,13 @@ impl Environment {
                 true,
                 existing_innovations.checked_innovation(new_node.id, existing_connection.to),
             );
-            println!("adding first: {:?}", new_first);
+            // println!("adding first: {:?}", new_first);
             genome.connections.push(new_first);
-            println!("adding second: {:?}", new_second);
+            // println!("adding second: {:?}", new_second);
             genome.connections.push(new_second);
+            // println!("before-nodes: {:?}", genome.nodes);
+            genome.nodes.push(new_node);
+            // println!("after-nodes: {:?}", genome.nodes);
         }
         if rand::thread_rng().gen_range(0.0..1.0) < self.add_connection {
             let potential_inputs = genome
@@ -871,7 +871,7 @@ impl Environment {
                     true,
                     existing_innovations.checked_innovation(selected_input.id, selected_output.id),
                 );
-                println!("creating: {:?}", connection);
+                // println!("creating: {:?}", connection);
                 genome.connections.push(connection);
                 if genome
                     .nodes
