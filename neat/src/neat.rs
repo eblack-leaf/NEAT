@@ -1,6 +1,8 @@
 use rand::Rng;
 use std::cmp::PartialEq;
 use std::collections::{HashMap, HashSet};
+use std::fmt::{Display, Formatter, Write};
+
 pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]];
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 pub(crate) const INPUT_DIM: usize = 2;
@@ -48,8 +50,9 @@ pub(crate) fn neat() {
                 population.genomes.clone(),
             ));
             println!(
-                "evaluation: {:?}",
-                evaluation.history.last().unwrap().best_genome.fitness
+                "evaluation@{}: {}",
+                g,
+                evaluation.history.last().unwrap().best_genome
             );
             return;
         }
@@ -133,7 +136,7 @@ pub(crate) fn neat() {
                 .count += 1;
         }
         let mut total_remaining = population.count;
-        println!("total-remaining: {}", total_remaining);
+        // println!("total-remaining: {}", total_remaining);
         let mut g_id = 0;
         let mut last_species_id = species_tree.order.len();
         for (i, s) in species_tree.order.iter().enumerate().rev() {
@@ -154,28 +157,28 @@ pub(crate) fn neat() {
                     //     population.count,
                     //          species.explicit_fitness_sharing / species_tree.total_fitness * population.count as f32
                     // );
-                    println!("total-remaining: {} for {}", total_remaining, species_id);
+                    // println!("total-remaining: {} for {}", total_remaining, species_id);
                     total_remaining
                 } else {
                     let species_percent =
                         species.explicit_fitness_sharing / species_tree.total_fitness;
                     let of_population = species_percent * population.count as f32;
-                    println!(
-                        "species[{}].fitness: {} / total: {} = {} * population: {} = {}",
-                        species_id,
-                        species.explicit_fitness_sharing,
-                        species_tree.total_fitness,
-                        species_percent,
-                        population.count,
-                        of_population
-                    );
+                    // println!(
+                    //     "species[{}].fitness: {} / total: {} = {} * population: {} = {}",
+                    //     species_id,
+                    //     species.explicit_fitness_sharing,
+                    //     species_tree.total_fitness,
+                    //     species_percent,
+                    //     population.count,
+                    //     of_population
+                    // );
                     let requested_offspring = of_population as usize;
                     total_remaining = total_remaining
                         .checked_sub(requested_offspring)
                         .unwrap_or_default();
                     requested_offspring
                 };
-                println!("requested[{}]: {}", species_id, requested_offspring);
+                // println!("requested[{}]: {}", species_id, requested_offspring);
                 let requested_offspring = if species.count > environment.champion_network_count {
                     let champion_id = *species
                         .current_organisms
@@ -203,7 +206,7 @@ pub(crate) fn neat() {
                 let normal = requested_offspring
                     .checked_sub(skip_crossover)
                     .unwrap_or_default();
-                println!("skip: {} normal: {}", skip_crossover, normal);
+                // println!("skip: {} normal: {}", skip_crossover, normal);
                 let mut species_selection = species
                     .current_organisms
                     .iter()
@@ -219,10 +222,7 @@ pub(crate) fn neat() {
                     elitist_percent.max(1)
                 };
                 // println!("elitist-percent: {}", elitist_percent);
-                species_selection = species_selection
-                    .get(0..elitist_percent)
-                    .unwrap()
-                    .to_vec();
+                species_selection = species_selection.get(0..elitist_percent).unwrap().to_vec();
                 if species_selection.is_empty() {
                     total_remaining += requested_offspring;
                     // println!("skipping: {}", species_id);
@@ -257,19 +257,14 @@ pub(crate) fn neat() {
             species_tree.clone(),
             population.genomes.clone(),
         );
-        println!(
-            "metrics: {:?} @ {} next_gen_count: {}",
-            metrics.best_genome.fitness,
-            g,
-            next_gen.len()
-        );
+        println!("metrics: {:?} @ {}", metrics.best_genome.fitness, g,);
         evaluation.history.push(metrics);
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
     }
     println!(
-        "evaluation: {:?}",
-        evaluation.history.last().unwrap().best_genome.fitness
+        "evaluation: {}",
+        evaluation.history.last().unwrap().best_genome
     );
 }
 pub(crate) fn crossover(
@@ -488,6 +483,24 @@ pub(crate) struct Genome {
     pub(crate) node_id_generator: NodeId,
     pub(crate) species_id: SpeciesId,
     pub(crate) id: GenomeId,
+}
+impl Display for Genome {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("Genome: {} w/ fitness: {}\n", self.id, self.fitness))?;
+        f.write_str("nodes:\n")?;
+        for n in self.nodes.iter() {
+            f.write_fmt(format_args!("id: {}@{:?}\n", n.id, n.ty))?;
+        }
+        f.write_str("connections:\n")?;
+        for c in self.connections.iter() {
+            f.write_fmt(format_args!(
+                "from: {} to: {} weight: {} enabled: {} innov: {}\n",
+                c.from, c.to, c.weight, c.enabled, c.innovation.idx
+            ))?;
+        }
+        f.write_fmt(format_args!("species: {}\n", self.species_id))?;
+        Ok(())
+    }
 }
 impl Genome {
     pub(crate) fn blank(id: GenomeId) -> Self {
@@ -807,7 +820,7 @@ impl SpeciesTree {
                 f
             } else {
                 let idx = self.order.len();
-                println!("new species: {}", idx);
+                // println!("new species: {}", idx);
                 let mut g = genome.clone();
                 g.species_id = idx;
                 self.order.push(Species::new(g));
