@@ -300,20 +300,20 @@ pub(crate) fn crossover(
             .iter()
             .find(|b| b.innovation == c.innovation)
         {
-            if !matching.enabled {
-                gene.enabled = false;
-            }
+            // if !matching.enabled {
+            //     gene.enabled = false;
+            // }
             if rand::thread_rng().gen_range(0.0..1.0) < 0.5 {
                 gene = matching.clone();
-                if !c.enabled {
-                    gene.enabled = false;
-                }
+                // if !c.enabled {
+                //     gene.enabled = false;
+                // }
                 nodes.0 = Some(other.nodes.get(gene.from).unwrap().clone());
                 nodes.1 = Some(other.nodes.get(gene.to).unwrap().clone());
             }
         }
         if !gene.enabled {
-            let should_enable = rand::thread_rng().gen_range(0.0..1.0) < environment.reenable_gene;
+            let should_enable = rand::thread_rng().gen_range(0.0..1.0) < environment.reenable_gene || c.enabled;
             // println!("reenable: {}", should_enable);
             gene.enabled = should_enable;
         }
@@ -874,7 +874,7 @@ impl Environment {
             skip_crossover: 0.25,
             interspecies: 0.001,
             add_node: 0.03,
-            add_connection: 0.05,
+            add_connection: 0.5,
             stagnation_threshold: 15,
             champion_network_count: 5,
             elitism_percent: 0.3,
