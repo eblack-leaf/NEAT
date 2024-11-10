@@ -70,6 +70,7 @@ pub(crate) fn neat() {
             .fitness;
         let fit_range = (max_fitness - min_fitness).max(1.0);
         let mut culled_organisms = vec![];
+        let mut to_remake = vec![];
         let mut current_active_species = species_tree.num_active_species();
         println!("current-active-species: {}", current_active_species);
         for (i, species) in species_tree.order.iter_mut().enumerate() {
@@ -94,14 +95,16 @@ pub(crate) fn neat() {
                 current_active_species -= 1;
                 if current_active_species != 0 {
                     println!("culling: {}", i);
-                    species.count = 0;
-                    species.culled = true;
                     for s in species.current_organisms.drain(..) {
                         culled_organisms.push(s);
                     }
+                    species.count = 0;
+                    species.culled = true;
                     continue;
                 } else {
-                    println!("skipping cull for {}", i);
+                    for s in species.current_organisms.drain(..) {
+                        to_remake.push(s);
+                    }
                 }
             }
             let average_of_species = species.explicit_fitness_sharing / species.count as f32;
@@ -137,6 +140,9 @@ pub(crate) fn neat() {
                 .get_mut(new_designation.unwrap())
                 .unwrap()
                 .count += 1;
+        }
+        for t in to_remake {
+            *population.genomes.get_mut(t).unwrap() = Genome::new(INPUT_DIM, OUTPUT_DIM, t);
         }
         let mut total_remaining = population.count;
         // println!("total-remaining: {}", total_remaining);
@@ -183,19 +189,19 @@ pub(crate) fn neat() {
                 };
                 // println!("requested[{}]: {}", species_id, requested_offspring);
                 let requested_offspring = if species.count > environment.champion_network_count {
-                    let champion_id = *species
+                    let champion_id = species
                         .current_organisms
                         .iter()
+                        .copied()
                         .max_by(|l, r| {
                             population
                                 .genomes
-                                .get(**l)
+                                .get(*l)
                                 .unwrap()
                                 .fitness
-                                .partial_cmp(&population.genomes.get(**r).unwrap().fitness)
+                                .partial_cmp(&population.genomes.get(*r).unwrap().fitness)
                                 .unwrap()
-                        })
-                        .unwrap();
+                        }).unwrap_or_default();
                     let mut champion = population.genomes.get(champion_id).unwrap().clone();
                     champion.id = g_id;
                     next_gen.push(champion);
@@ -260,7 +266,7 @@ pub(crate) fn neat() {
             species_tree.clone(),
             population.genomes.clone(),
         );
-        println!("metrics: {:?} @ {}", metrics.best_genome.fitness, g,);
+        println!("metrics: {} @ {} active-species: {}", metrics.best_genome, g, species_tree.num_active_species());
         evaluation.history.push(metrics);
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
