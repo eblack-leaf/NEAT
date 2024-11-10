@@ -102,7 +102,6 @@ pub(crate) fn neat() {
                     continue;
                 } else {
                     println!("skipping cull for {}", i);
-                    species.last_improvement = g;
                 }
             }
             let average_of_species = species.explicit_fitness_sharing / species.count as f32;
@@ -300,20 +299,20 @@ pub(crate) fn crossover(
             .iter()
             .find(|b| b.innovation == c.innovation)
         {
-            // if !matching.enabled {
-            //     gene.enabled = false;
-            // }
+            if !matching.enabled {
+                gene.enabled = false;
+            }
             if rand::thread_rng().gen_range(0.0..1.0) < 0.5 {
                 gene = matching.clone();
-                // if !c.enabled {
-                //     gene.enabled = false;
-                // }
+                if !c.enabled {
+                    gene.enabled = false;
+                }
                 nodes.0 = Some(other.nodes.get(gene.from).unwrap().clone());
                 nodes.1 = Some(other.nodes.get(gene.to).unwrap().clone());
             }
         }
         if !gene.enabled {
-            let should_enable = rand::thread_rng().gen_range(0.0..1.0) < environment.reenable_gene || c.enabled;
+            let should_enable = rand::thread_rng().gen_range(0.0..1.0) < environment.reenable_gene;
             // println!("reenable: {}", should_enable);
             gene.enabled = should_enable;
         }
@@ -321,6 +320,18 @@ pub(crate) fn crossover(
         *child.nodes.get_mut(gene.from).unwrap() = nodes.0.unwrap();
         *child.nodes.get_mut(gene.to).unwrap() = nodes.1.unwrap();
         // println!("adding gene: {:?}", gene);
+    }
+    for node in best_parent.nodes.iter() {
+        let mut co = node.clone();
+        if child.nodes.iter().find(|n| n.id == node.id).is_some() {
+            continue;
+        }
+        if let Some(matching) = other.nodes.get(node.id) {
+            if rand::thread_rng().gen_range(0.0..1.0) < 0.5 {
+                co = matching.clone();
+            }
+        }
+        *child.nodes.get_mut(node.id).unwrap() = co;
     }
     child
 }
@@ -532,7 +543,7 @@ impl Genome {
             .iter()
             .map(|c| c.innovation.idx)
             .max()
-            .unwrap();
+            .unwrap_or_default();
         for primary in self.connections.iter() {
             if primary.innovation.idx > max_innovation {
                 excess += 1;
@@ -548,8 +559,8 @@ impl Genome {
         let max_node_id = other
             .nodes
             .iter()
-            .max_by(|a, b| a.id.partial_cmp(&b.id).unwrap())
-            .unwrap()
+            .max_by(|a, b| a.id.partial_cmp(&b.id).unwrap()).cloned()
+            .unwrap_or(Node::new(0, NodeType::Hidden))
             .id;
         for node in self.nodes.iter() {
             if node.id > max_node_id {
@@ -864,6 +875,8 @@ pub(crate) struct Environment {
     pub(crate) champion_network_count: usize,
     pub(crate) elitism_percent: f32,
     pub(crate) reenable_gene: f32,
+    pub(crate) delete_node: f32,
+    pub(crate) delete_connection: f32,
 }
 
 impl Environment {
@@ -873,12 +886,14 @@ impl Environment {
             disable_gene: 0.75,
             skip_crossover: 0.25,
             interspecies: 0.001,
-            add_node: 0.03,
-            add_connection: 0.5,
-            stagnation_threshold: 15,
+            add_node: 0.15,
+            add_connection: 0.75,
+            stagnation_threshold: 20,
             champion_network_count: 5,
             elitism_percent: 0.3,
             reenable_gene: 0.25,
+            delete_node: 0.05,
+            delete_connection: 0.35,
         }
     }
     pub(crate) fn mutate(
@@ -896,34 +911,61 @@ impl Environment {
                 }
             }
         }
+        if rand::thread_rng().gen_range(0.0..1.0) < self.delete_node {
+            let available = genome.nodes.iter().filter(|n| n.ty == NodeType::Hidden).cloned().collect::<Vec<_>>();
+            if !available.is_empty() {
+                let choice = available.get(rand::thread_rng().gen_range(0..available.len())).unwrap();
+                let mut to_remove = vec![];
+                for c_idx in 0..genome.connections.len() {
+                    let c = genome.connections.get(c_idx).unwrap().clone();
+                    if c.from == choice.id || c.to == choice.id {
+                        to_remove.push(c_idx);
+                    }
+                }
+                to_remove.sort();
+                to_remove.reverse();
+                for idx in to_remove {
+                    genome.connections.remove(idx);
+                }
+            }
+        }
+        if rand::thread_rng().gen_range(0.0..1.0) < self.delete_connection {
+            if !genome.connections.is_empty() {
+                let choice = rand::thread_rng().gen_range(0..genome.connections.len());
+                genome.connections.get_mut(choice).unwrap().enabled = false;
+                // println!("removing connection: {:?}", choice);
+            }
+        }
         if rand::thread_rng().gen_range(0.0..1.0) < self.add_node {
-            let new_node = Node::new(genome.node_id_generator, NodeType::Hidden);
-            genome.node_id_generator += 1;
-            // println!("id-gen: {}", genome.node_id_generator);
-            let idx = rand::thread_rng().gen_range(0..genome.connections.len());
-            let existing_connection = genome.connections.get(idx).unwrap().clone();
-            genome.connections.get_mut(idx).unwrap().enabled = false;
-            let new_first = Connection::new(
-                existing_connection.from,
-                new_node.id,
-                1.0,
-                true,
-                existing_innovations.checked_innovation(existing_connection.from, new_node.id),
-            );
-            let new_second = Connection::new(
-                new_node.id,
-                existing_connection.to,
-                existing_connection.weight,
-                true,
-                existing_innovations.checked_innovation(new_node.id, existing_connection.to),
-            );
-            // println!("adding first: {:?}", new_first);
-            genome.connections.push(new_first);
-            // println!("adding second: {:?}", new_second);
-            genome.connections.push(new_second);
-            // println!("before-nodes: {:?}", genome.nodes);
-            genome.nodes.push(new_node);
-            // println!("after-nodes: {:?}", genome.nodes);
+            if !genome.connections.is_empty() {
+                let new_node = Node::new(genome.node_id_generator, NodeType::Hidden);
+                genome.node_id_generator += 1;
+                // println!("id-gen: {}", genome.node_id_generator);
+                let idx = rand::thread_rng().gen_range(0..genome.connections.len());
+                let existing_connection = genome.connections.get(idx).unwrap().clone();
+                genome.connections.get_mut(idx).unwrap().enabled = false;
+                let new_first = Connection::new(
+                    existing_connection.from,
+                    new_node.id,
+                    1.0,
+                    true,
+                    existing_innovations.checked_innovation(existing_connection.from, new_node.id),
+                );
+                let new_second = Connection::new(
+                    new_node.id,
+                    existing_connection.to,
+                    existing_connection.weight,
+                    true,
+                    existing_innovations.checked_innovation(new_node.id, existing_connection.to),
+                );
+                // println!("adding first: {:?}", new_first);
+                genome.connections.push(new_first);
+                // println!("adding second: {:?}", new_second);
+                genome.connections.push(new_second);
+                // println!("before-nodes: {:?}", genome.nodes);
+                genome.nodes.push(new_node);
+                // println!("after-nodes: {:?}", genome.nodes);
+            }
         }
         if rand::thread_rng().gen_range(0.0..1.0) < self.add_connection {
             let potential_inputs = genome
@@ -938,46 +980,48 @@ impl Environment {
                 .filter(|n| n.ty != NodeType::Input && n.ty != NodeType::Bias)
                 .cloned()
                 .collect::<Vec<Node>>();
-            let selected_input = potential_inputs
-                .get(rand::thread_rng().gen_range(0..potential_inputs.len()))
-                .cloned()
-                .unwrap();
-            let selected_output = potential_outputs
-                .get(rand::thread_rng().gen_range(0..potential_outputs.len()))
-                .cloned()
-                .unwrap();
-            if creates_cycle(selected_input.id, selected_output.id, &genome) {
-                return genome;
-            }
-            let predicate_found = genome.connections.iter().find(|c| {
-                c.from == selected_input.id && c.to == selected_output.id
-                    || c.from == selected_output.id && c.to == selected_input.id
-            });
-            if predicate_found.is_none() {
-                let connection = Connection::new(
-                    selected_input.id,
-                    selected_output.id,
-                    rand::thread_rng().gen_range(0.0..1.0),
-                    true,
-                    existing_innovations.checked_innovation(selected_input.id, selected_output.id),
-                );
-                // println!("creating: {:?}", connection);
-                genome.connections.push(connection);
-                if genome
-                    .nodes
-                    .iter()
-                    .find(|n| n.id == selected_input.id)
-                    .is_none()
-                {
-                    genome.nodes.push(selected_input);
+            if !potential_inputs.is_empty() && ! potential_outputs.is_empty() {
+                let selected_input = potential_inputs
+                    .get(rand::thread_rng().gen_range(0..potential_inputs.len()))
+                    .cloned()
+                    .unwrap();
+                let selected_output = potential_outputs
+                    .get(rand::thread_rng().gen_range(0..potential_outputs.len()))
+                    .cloned()
+                    .unwrap();
+                if creates_cycle(selected_input.id, selected_output.id, &genome) {
+                    return genome;
                 }
-                if genome
-                    .nodes
-                    .iter()
-                    .find(|n| n.id == selected_output.id)
-                    .is_none()
-                {
-                    genome.nodes.push(selected_output);
+                let predicate_found = genome.connections.iter().find(|c| {
+                    c.from == selected_input.id && c.to == selected_output.id
+                        || c.from == selected_output.id && c.to == selected_input.id
+                });
+                if predicate_found.is_none() {
+                    let connection = Connection::new(
+                        selected_input.id,
+                        selected_output.id,
+                        rand::thread_rng().gen_range(0.0..1.0),
+                        true,
+                        existing_innovations.checked_innovation(selected_input.id, selected_output.id),
+                    );
+                    // println!("creating: {:?}", connection);
+                    genome.connections.push(connection);
+                    if genome
+                        .nodes
+                        .iter()
+                        .find(|n| n.id == selected_input.id)
+                        .is_none()
+                    {
+                        genome.nodes.push(selected_input);
+                    }
+                    if genome
+                        .nodes
+                        .iter()
+                        .find(|n| n.id == selected_output.id)
+                        .is_none()
+                    {
+                        genome.nodes.push(selected_output);
+                    }
                 }
             }
         }
