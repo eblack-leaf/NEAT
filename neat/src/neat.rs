@@ -1,7 +1,7 @@
 use rand::Rng;
 use std::cmp::PartialEq;
 use std::collections::{HashMap, HashSet};
-pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0]];
+pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]];
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 pub(crate) const INPUT_DIM: usize = 2;
 pub(crate) const OUTPUT_DIM: usize = 1;
@@ -12,7 +12,7 @@ pub(crate) const ACTIVATION_SCALE: f32 = 4.9;
 
 pub(crate) fn neat() {
     let mut population = Population::new(INPUT_DIM, OUTPUT_DIM, POPULATION_COUNT);
-    let compatibility = Compatibility::new(1.0, 1.0, 0.4, 3.0);
+    let compatibility = Compatibility::new(1.0, 1.0, 0.5, 1.0, 3.0);
     let perfect_fitness = 1.0 * XOR_INPUT.len() as f32;
     let environment = Environment::new();
     let mut existing_innovation = ExistingInnovations::new(INPUT_DIM, OUTPUT_DIM);
@@ -47,7 +47,10 @@ pub(crate) fn neat() {
                 species_tree.clone(),
                 population.genomes.clone(),
             ));
-            println!("evaluation: {:?}", evaluation.history.last().unwrap().best_genome.fitness);
+            println!(
+                "evaluation: {:?}",
+                evaluation.history.last().unwrap().best_genome.fitness
+            );
             return;
         }
         let min_fitness = population
@@ -65,8 +68,12 @@ pub(crate) fn neat() {
         let fit_range = (max_fitness - min_fitness).max(1.0);
         let mut culled_organisms = vec![];
         let mut current_active_species = species_tree.num_active_species();
-        for species in species_tree.order.iter_mut() {
+        for (i, species) in species_tree.order.iter_mut().enumerate() {
             if species.count == 0 || species.culled {
+                // println!(
+                //     "skipping fitness-evaluation for species {} because {} or {}",
+                //     i, species.count, species.culled
+                // );
                 continue;
             }
             let species_max = species
@@ -81,20 +88,24 @@ pub(crate) fn neat() {
             }
             if g > species.last_improvement + environment.stagnation_threshold {
                 current_active_species -= 1;
-                if current_active_species == 0 {
-                    println!("all species culled");
-                    return;
+                if current_active_species != 0 {
+                    species.count = 0;
+                    species.culled = true;
+                    for s in species.current_organisms.drain(..) {
+                        culled_organisms.push(s);
+                    }
+                    continue;
+                } else {
+                    species.last_improvement = g;
                 }
-                species.count = 0;
-                species.culled = true;
-                for s in species.current_organisms.drain(..) {
-                    culled_organisms.push(s);
-                }
-                continue;
             }
             let average_of_species = species.explicit_fitness_sharing / species.count as f32;
             species.explicit_fitness_sharing = (average_of_species - min_fitness) / fit_range;
             species_tree.total_fitness += species.explicit_fitness_sharing;
+            // println!(
+            //     "species[{}].fitness: {} total-fitness: {} @ count: {}",
+            //     i, species.explicit_fitness_sharing, species_tree.total_fitness, species.count
+            // );
         }
         for culled in culled_organisms {
             let mut new_designation = None;
@@ -120,33 +131,41 @@ pub(crate) fn neat() {
                 .unwrap()
                 .count += 1;
         }
-        population
-            .genomes
-            .sort_by(|a, b| a.fitness.partial_cmp(&b.fitness).unwrap());
-        population.genomes.reverse();
-        let mut selection = population
-            .genomes
-            .get(0..(environment.elitism_percent * population.count as f32) as usize)
-            .unwrap()
-            .iter()
-            .cloned()
-            .collect::<Vec<Genome>>();
         let mut total_remaining = population.count;
         let mut g_id = 0;
         for (species_id, species) in species_tree.order.iter().enumerate() {
             if species.count > 0 && !species.culled {
                 let requested_offspring = if species_id + 1 == species_tree.num_active_species() {
+                    // println!("total-remaining: {} for species[{}].fitness: {} / total: {} = {} * population: {} = {}",
+                    //          total_remaining,
+                    //     species_id,
+                    //     species.explicit_fitness_sharing,
+                    //     species_tree.total_fitness,
+                    //     species.explicit_fitness_sharing / species_tree.total_fitness,
+                    //     population.count,
+                    //          species.explicit_fitness_sharing / species_tree.total_fitness * population.count as f32
+                    // );
                     total_remaining
                 } else {
                     let species_percent =
                         species.explicit_fitness_sharing / species_tree.total_fitness;
                     let of_population = species_percent * population.count as f32;
+                    // println!(
+                    //     "species[{}].fitness: {} / total: {} = {} * population: {} = {}",
+                    //     species_id,
+                    //     species.explicit_fitness_sharing,
+                    //     species_tree.total_fitness,
+                    //     species_percent,
+                    //     population.count,
+                    //     of_population
+                    // );
                     let requested_offspring = of_population as usize;
                     total_remaining = total_remaining
                         .checked_sub(requested_offspring)
                         .unwrap_or_default();
                     requested_offspring
                 };
+                // println!("requested: {}", requested_offspring);
                 let requested_offspring = if species.count > environment.champion_network_count {
                     let champion_id = *species
                         .current_organisms
@@ -174,16 +193,33 @@ pub(crate) fn neat() {
                 let normal = requested_offspring
                     .checked_sub(skip_crossover)
                     .unwrap_or_default();
-                let species_selection = species
+                // println!("skip: {} normal: {}", skip_crossover, normal);
+                let mut species_selection = species
                     .current_organisms
                     .iter()
-                    .filter(|id| selection.iter().find(|s| s.id == **id).is_some())
-                    .cloned()
-                    .collect::<Vec<GenomeId>>();
+                    .filter_map(|gi| Some(population.genomes.get(*gi).unwrap().clone()))
+                    .collect::<Vec<Genome>>();
+                species_selection.sort_by(|a, b| a.fitness.partial_cmp(&b.fitness).unwrap());
+                species_selection.reverse();
+                let elitist_percent =
+                    (environment.elitism_percent * species_selection.len() as f32).ceil() as usize;
+                let elitist_percent = if elitist_percent > species_selection.len() {
+                    species_selection.len()
+                } else {
+                    elitist_percent.max(1)
+                };
+                // println!("elitist-percent: {}", elitist_percent);
+                species_selection = species_selection
+                    .get(0..elitist_percent)
+                    .unwrap()
+                    .to_vec();
+                if species_selection.is_empty() {
+                    // println!("skipping: {}", species_id);
+                    continue;
+                }
                 for _offspring_request in 0..skip_crossover {
                     let rand_idx = rand::thread_rng().gen_range(0..species_selection.len());
-                    let selected_id = species_selection.get(rand_idx).unwrap();
-                    let selected = population.genomes.get(*selected_id).cloned().unwrap();
+                    let selected = species_selection.get(rand_idx).unwrap().clone();
                     let mut mutated = environment.mutate(selected, &mut existing_innovation);
                     mutated.id = g_id;
                     next_gen.push(mutated);
@@ -191,19 +227,12 @@ pub(crate) fn neat() {
                 }
                 for _offspring_request in 0..normal {
                     let parent1_idx = rand::thread_rng().gen_range(0..species_selection.len());
-                    let parent1_genome_idx = *species_selection.get(parent1_idx).unwrap();
-                    let parent1 = population.genomes.get(parent1_genome_idx).unwrap().clone();
+                    let parent1 = species_selection.get(parent1_idx).unwrap().clone();
                     let mut parent2_idx = parent1_idx;
-                    while parent2_idx == parent1_idx && species.count > 1 {
+                    while parent2_idx == parent1_idx && species_selection.len() > 1 {
                         parent2_idx = rand::thread_rng().gen_range(0..species_selection.len());
                     }
-                    let parent2_genome_idx = *species_selection
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<GenomeId>>()
-                        .get(parent2_idx)
-                        .unwrap();
-                    let parent2 = population.genomes.get(parent2_genome_idx).unwrap().clone();
+                    let parent2 = species_selection.get(parent2_idx).unwrap().clone();
                     let crossover = crossover(g_id, parent1, parent2, &environment);
                     let mutated_crossover = environment.mutate(crossover, &mut existing_innovation);
                     next_gen.push(mutated_crossover);
@@ -217,12 +246,20 @@ pub(crate) fn neat() {
             species_tree.clone(),
             population.genomes.clone(),
         );
-        println!("metrics: {:?} @ {}", metrics.best_genome.fitness, g);
+        println!(
+            "metrics: {:?} @ {} next_gen_count: {}",
+            metrics.best_genome.fitness,
+            g,
+            next_gen.len()
+        );
         evaluation.history.push(metrics);
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
     }
-    println!("evaluation: {:?}", evaluation.history.last().unwrap().best_genome.fitness);
+    println!(
+        "evaluation: {:?}",
+        evaluation.history.last().unwrap().best_genome.fitness
+    );
 }
 pub(crate) fn crossover(
     id: GenomeId,
@@ -239,7 +276,10 @@ pub(crate) fn crossover(
     } else {
         (parent2, parent1)
     };
-    child.nodes.resize(best_parent.nodes.len(), Node::new(NodeId::MAX, NodeType::Hidden));
+    child.nodes.resize(
+        best_parent.nodes.len(),
+        Node::new(NodeId::MAX, NodeType::Hidden),
+    );
     child.node_id_generator = best_parent.nodes.len();
     for c in best_parent.connections.iter() {
         let mut gene = c.clone();
@@ -260,6 +300,7 @@ pub(crate) fn crossover(
         if !gene.enabled {
             let should_enable =
                 rand::thread_rng().gen_range(0.0..1.0) < environment.reenable_gene || c.enabled;
+            // println!("reenable: {}", should_enable);
             gene.enabled = should_enable;
         }
         child.connections.push(gene.clone());
@@ -487,7 +528,6 @@ impl Genome {
                 disjoint += 1;
             }
         }
-        let n = self.connections.len().max(other.connections.len());
         let mut num_weights = 0.0;
         let mut weight_difference = 0.0;
         for c in self.connections.iter() {
@@ -500,9 +540,11 @@ impl Genome {
                 num_weights += 1.0;
             }
         }
+        if num_weights == 0.0 {
+            num_weights = 1.0;
+        }
         weight_difference /= num_weights;
         CompatibilityMetrics {
-            n: n as f32,
             excess: excess as f32,
             disjoint: disjoint as f32,
             weight_difference,
@@ -564,9 +606,9 @@ impl Genome {
         for i in (inputs.len() + OUTPUT_DIM)..(inputs.len() + 2 * OUTPUT_DIM) {
             staged_output.insert(i, 1.0);
         }
-        println!("-------------------------------------------------------------------------------");
+        // println!("-------------------------------------------------------------------------------");
         // println!("unordered: {:?}", self.nodes);
-        println!("ordered: {:?}", ordered);
+        // println!("ordered: {:?}", ordered);
         for o in ordered {
             // println!("getting ordered node: {}", o);
             let node = self.nodes.get(o).unwrap();
@@ -585,13 +627,16 @@ impl Genome {
                         }
                     })
                     .collect::<Vec<_>>();
-                println!("input-ids: {:?} for {:?}", input_ids, o);
+                // println!("input-ids: {:?} for {:?}", input_ids, o);
                 let stage_input = input_ids
                     .iter()
                     .map(|id| {
-                        println!("getting-staged: {}", id);
+                        // println!("getting-staged: {}", id);
                         if staged_output.get(id).is_none() {
-                            println!("invalid-nodes: {:?} w/ connections: {:?}", self.nodes, self.connections);
+                            println!(
+                                "invalid-nodes: {:?} w/ connections: {:?}",
+                                self.nodes, self.connections
+                            );
                         }
                         staged_output.get(id).unwrap().clone()
                     })
@@ -601,14 +646,14 @@ impl Genome {
                     let w = W.get(i).unwrap();
                     out += *w * *x;
                 }
-                println!("setting staged: {}", o);
-                staged_output.insert(o, sigmoid(out * ACTIVATION_SCALE));
+                let adjusted_out = sigmoid(out * ACTIVATION_SCALE);
+                staged_output.insert(o, adjusted_out);
             }
         }
-        // println!("staged: {:?}", staged_output);
         for i in inputs.len()..(inputs.len() + OUTPUT_DIM) {
             outputs.push(staged_output.get(&i).unwrap().clone());
         }
+        // println!("outputs: {:?}", outputs);
         outputs
     }
 }
@@ -654,25 +699,26 @@ pub(crate) struct Compatibility {
     pub(crate) c2: f32,
     pub(crate) c3: f32,
     pub(crate) threshold: f32,
+    pub(crate) n: f32,
 }
 pub(crate) struct CompatibilityMetrics {
-    pub(crate) n: f32,
     pub(crate) excess: f32,
     pub(crate) disjoint: f32,
     pub(crate) weight_difference: f32,
 }
 impl Compatibility {
     pub(crate) fn distance(&self, metrics: CompatibilityMetrics) -> f32 {
-        self.c1 * metrics.excess / metrics.n
-            + self.c2 * metrics.disjoint / metrics.n
+        self.c1 * metrics.excess / self.n
+            + self.c2 * metrics.disjoint / self.n
             + self.c3 * metrics.weight_difference
     }
-    pub(crate) fn new(c1: f32, c2: f32, c3: f32, threshold: f32) -> Self {
+    pub(crate) fn new(c1: f32, c2: f32, c3: f32, n: f32, threshold: f32) -> Self {
         Self {
             c1,
             c2,
             c3,
             threshold,
+            n,
         }
     }
 }
@@ -690,9 +736,9 @@ pub(crate) struct Species {
 impl Species {
     pub(crate) fn new(genome: Genome) -> Self {
         Self {
-            current_organisms: vec![],
+            current_organisms: vec![genome.id],
             representative: genome,
-            count: 0,
+            count: 1,
             explicit_fitness_sharing: 0.0,
             max_fitness: 0.0,
             last_improvement: 0,
@@ -734,7 +780,8 @@ impl SpeciesTree {
                 }
                 let distance =
                     compatibility.distance(genome.compatibility_metrics(&species.representative));
-                if distance < compatibility.threshold {
+                // println!("distance: {} threshold: {}", distance, compatibility.threshold);
+                if distance < compatibility.threshold.abs() {
                     found = Some(i);
                     break;
                 }
@@ -745,16 +792,18 @@ impl SpeciesTree {
                     .unwrap()
                     .current_organisms
                     .push(genome.id);
+                self.order.get_mut(f).unwrap().count += 1;
                 f
             } else {
                 let idx = self.order.len();
+                println!("new species: {}", idx);
                 let mut g = genome.clone();
                 g.species_id = idx;
                 self.order.push(Species::new(g));
                 idx
             };
+            // println!("setting genome[{}] to {}", genome.id, s);
             genome.species_id = s;
-            self.order.get_mut(s).unwrap().count += 1;
         }
         for species in self.order.iter_mut() {
             if species.count > 0 {
@@ -788,8 +837,8 @@ impl Environment {
             skip_crossover: 0.25,
             interspecies: 0.001,
             add_node: 0.03,
-            add_connection: 0.05,
-            stagnation_threshold: 500,
+            add_connection: 0.5,
+            stagnation_threshold: 15,
             champion_network_count: 5,
             elitism_percent: 0.3,
             reenable_gene: 0.25,
@@ -913,7 +962,7 @@ pub(crate) fn creates_cycle(
             if visited.iter().find(|v| **v == c.from).is_some()
                 && visited.iter().find(|v| **v == c.to).is_none()
             {
-                if c.to == selected_output_id {
+                if c.to == selected_input_id {
                     return true;
                 } else {
                     visited.push(c.to);
