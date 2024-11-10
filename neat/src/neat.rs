@@ -14,7 +14,7 @@ pub(crate) const ACTIVATION_SCALE: f32 = 4.9;
 
 pub(crate) fn neat() {
     let mut population = Population::new(INPUT_DIM, OUTPUT_DIM, POPULATION_COUNT);
-    let compatibility = Compatibility::new(1.0, 1.0, 0.5, 1.0, 3.0);
+    let compatibility = Compatibility::new(1.0, 1.0, 0.5, 3.0);
     let perfect_fitness = 1.0 * XOR_INPUT.len() as f32;
     let environment = Environment::new();
     let mut existing_innovation = ExistingInnovations::new(INPUT_DIM, OUTPUT_DIM);
@@ -71,6 +71,7 @@ pub(crate) fn neat() {
         let fit_range = (max_fitness - min_fitness).max(1.0);
         let mut culled_organisms = vec![];
         let mut current_active_species = species_tree.num_active_species();
+        println!("current-active-species: {}", current_active_species);
         for (i, species) in species_tree.order.iter_mut().enumerate() {
             if species.count == 0 || species.culled {
                 // println!(
@@ -92,6 +93,7 @@ pub(crate) fn neat() {
             if g > species.last_improvement + environment.stagnation_threshold {
                 current_active_species -= 1;
                 if current_active_species != 0 {
+                    println!("culling: {}", i);
                     species.count = 0;
                     species.culled = true;
                     for s in species.current_organisms.drain(..) {
@@ -99,42 +101,44 @@ pub(crate) fn neat() {
                     }
                     continue;
                 } else {
+                    println!("skipping cull for {}", i);
                     species.last_improvement = g;
                 }
             }
             let average_of_species = species.explicit_fitness_sharing / species.count as f32;
             species.explicit_fitness_sharing = (average_of_species - min_fitness) / fit_range;
+            // species.explicit_fitness_sharing = average_of_species;
             species_tree.total_fitness += species.explicit_fitness_sharing;
             // println!(
             //     "species[{}].fitness: {} total-fitness: {} @ count: {}",
             //     i, species.explicit_fitness_sharing, species_tree.total_fitness, species.count
             // );
         }
-        for culled in culled_organisms {
-            let mut new_designation = None;
-            while new_designation.is_none() {
-                let attempted_conversion =
-                    rand::thread_rng().gen_range(0..species_tree.order.len());
-                let c = species_tree.order.get(attempted_conversion).unwrap().count;
-                if c > 0 {
-                    new_designation = Some(attempted_conversion);
-                }
-            }
-            let mut to_copy_from = species_tree
-                .order
-                .get(new_designation.unwrap())
-                .unwrap()
-                .representative
-                .clone();
-            to_copy_from.id = culled;
-            to_copy_from.species_id = new_designation.unwrap();
-            *population.genomes.get_mut(culled).unwrap() = to_copy_from;
-            species_tree
-                .order
-                .get_mut(new_designation.unwrap())
-                .unwrap()
-                .count += 1;
-        }
+        // for culled in culled_organisms {
+        //     let mut new_designation = None;
+        //     while new_designation.is_none() {
+        //         let attempted_conversion =
+        //             rand::thread_rng().gen_range(0..species_tree.order.len());
+        //         let c = species_tree.order.get(attempted_conversion).unwrap().count;
+        //         if c > 0 {
+        //             new_designation = Some(attempted_conversion);
+        //         }
+        //     }
+        //     let mut to_copy_from = species_tree
+        //         .order
+        //         .get(new_designation.unwrap())
+        //         .unwrap()
+        //         .representative
+        //         .clone();
+        //     to_copy_from.id = culled;
+        //     to_copy_from.species_id = new_designation.unwrap();
+        //     *population.genomes.get_mut(culled).unwrap() = to_copy_from;
+        //     species_tree
+        //         .order
+        //         .get_mut(new_designation.unwrap())
+        //         .unwrap()
+        //         .count += 1;
+        // }
         let mut total_remaining = population.count;
         // println!("total-remaining: {}", total_remaining);
         let mut g_id = 0;
@@ -274,7 +278,6 @@ pub(crate) fn crossover(
     environment: &Environment,
 ) -> Genome {
     let mut child = Genome::blank(id);
-
     let (best_parent, other) = if parent1.fitness == parent2.fitness {
         (parent1, parent2)
     } else if parent1.fitness > parent2.fitness {
@@ -297,15 +300,20 @@ pub(crate) fn crossover(
             .iter()
             .find(|b| b.innovation == c.innovation)
         {
+            if !matching.enabled {
+                gene.enabled = false;
+            }
             if rand::thread_rng().gen_range(0.0..1.0) < 0.5 {
                 gene = matching.clone();
+                if !c.enabled {
+                    gene.enabled = false;
+                }
                 nodes.0 = Some(other.nodes.get(gene.from).unwrap().clone());
                 nodes.1 = Some(other.nodes.get(gene.to).unwrap().clone());
             }
         }
         if !gene.enabled {
-            let should_enable =
-                rand::thread_rng().gen_range(0.0..1.0) < environment.reenable_gene || c.enabled;
+            let should_enable = rand::thread_rng().gen_range(0.0..1.0) < environment.reenable_gene;
             // println!("reenable: {}", should_enable);
             gene.enabled = should_enable;
         }
@@ -486,7 +494,10 @@ pub(crate) struct Genome {
 }
 impl Display for Genome {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("Genome: {} w/ fitness: {}\n", self.id, self.fitness))?;
+        f.write_fmt(format_args!(
+            "Genome: {} w/ fitness: {}\n",
+            self.id, self.fitness
+        ))?;
         f.write_str("nodes:\n")?;
         for n in self.nodes.iter() {
             f.write_fmt(format_args!("id: {}@{:?}\n", n.id, n.ty))?;
@@ -568,10 +579,13 @@ impl Genome {
             num_weights = 1.0;
         }
         weight_difference /= num_weights;
+        let n = self.connections.len().max(other.connections.len());
+        let n = if n < 20 { n } else { n } as f32;
         CompatibilityMetrics {
             excess: excess as f32,
             disjoint: disjoint as f32,
             weight_difference,
+            n,
         }
     }
     pub(crate) fn new(inputs: usize, outputs: usize, id: GenomeId) -> Self {
@@ -723,26 +737,25 @@ pub(crate) struct Compatibility {
     pub(crate) c2: f32,
     pub(crate) c3: f32,
     pub(crate) threshold: f32,
-    pub(crate) n: f32,
 }
 pub(crate) struct CompatibilityMetrics {
     pub(crate) excess: f32,
     pub(crate) disjoint: f32,
     pub(crate) weight_difference: f32,
+    pub(crate) n: f32,
 }
 impl Compatibility {
     pub(crate) fn distance(&self, metrics: CompatibilityMetrics) -> f32 {
-        self.c1 * metrics.excess / self.n
-            + self.c2 * metrics.disjoint / self.n
+        self.c1 * metrics.excess / metrics.n
+            + self.c2 * metrics.disjoint / metrics.n
             + self.c3 * metrics.weight_difference
     }
-    pub(crate) fn new(c1: f32, c2: f32, c3: f32, n: f32, threshold: f32) -> Self {
+    pub(crate) fn new(c1: f32, c2: f32, c3: f32, threshold: f32) -> Self {
         Self {
             c1,
             c2,
             c3,
             threshold,
-            n,
         }
     }
 }
@@ -861,7 +874,7 @@ impl Environment {
             skip_crossover: 0.25,
             interspecies: 0.001,
             add_node: 0.03,
-            add_connection: 0.5,
+            add_connection: 0.05,
             stagnation_threshold: 15,
             champion_network_count: 5,
             elitism_percent: 0.3,
