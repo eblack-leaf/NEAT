@@ -1,4 +1,5 @@
 mod neat;
+mod new_neat;
 
 use crate::neat::neat;
 use foliage::Foliage;

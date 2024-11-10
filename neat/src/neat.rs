@@ -559,7 +559,8 @@ impl Genome {
         let max_node_id = other
             .nodes
             .iter()
-            .max_by(|a, b| a.id.partial_cmp(&b.id).unwrap()).cloned()
+            .max_by(|a, b| a.id.partial_cmp(&b.id).unwrap())
+            .cloned()
             .unwrap_or(Node::new(0, NodeType::Hidden))
             .id;
         for node in self.nodes.iter() {
@@ -912,9 +913,16 @@ impl Environment {
             }
         }
         if rand::thread_rng().gen_range(0.0..1.0) < self.delete_node {
-            let available = genome.nodes.iter().filter(|n| n.ty == NodeType::Hidden).cloned().collect::<Vec<_>>();
+            let available = genome
+                .nodes
+                .iter()
+                .filter(|n| n.ty == NodeType::Hidden)
+                .cloned()
+                .collect::<Vec<_>>();
             if !available.is_empty() {
-                let choice = available.get(rand::thread_rng().gen_range(0..available.len())).unwrap();
+                let choice = available
+                    .get(rand::thread_rng().gen_range(0..available.len()))
+                    .unwrap();
                 let mut to_remove = vec![];
                 for c_idx in 0..genome.connections.len() {
                     let c = genome.connections.get(c_idx).unwrap().clone();
@@ -980,7 +988,7 @@ impl Environment {
                 .filter(|n| n.ty != NodeType::Input && n.ty != NodeType::Bias)
                 .cloned()
                 .collect::<Vec<Node>>();
-            if !potential_inputs.is_empty() && ! potential_outputs.is_empty() {
+            if !potential_inputs.is_empty() && !potential_outputs.is_empty() {
                 let selected_input = potential_inputs
                     .get(rand::thread_rng().gen_range(0..potential_inputs.len()))
                     .cloned()
@@ -1002,7 +1010,8 @@ impl Environment {
                         selected_output.id,
                         rand::thread_rng().gen_range(0.0..1.0),
                         true,
-                        existing_innovations.checked_innovation(selected_input.id, selected_output.id),
+                        existing_innovations
+                            .checked_innovation(selected_input.id, selected_output.id),
                     );
                     // println!("creating: {:?}", connection);
                     genome.connections.push(connection);
