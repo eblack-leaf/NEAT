@@ -113,31 +113,31 @@ pub(crate) fn neat() {
             //     i, species.explicit_fitness_sharing, species_tree.total_fitness, species.count
             // );
         }
-        // for culled in culled_organisms {
-        //     let mut new_designation = None;
-        //     while new_designation.is_none() {
-        //         let attempted_conversion =
-        //             rand::thread_rng().gen_range(0..species_tree.order.len());
-        //         let c = species_tree.order.get(attempted_conversion).unwrap().count;
-        //         if c > 0 {
-        //             new_designation = Some(attempted_conversion);
-        //         }
-        //     }
-        //     let mut to_copy_from = species_tree
-        //         .order
-        //         .get(new_designation.unwrap())
-        //         .unwrap()
-        //         .representative
-        //         .clone();
-        //     to_copy_from.id = culled;
-        //     to_copy_from.species_id = new_designation.unwrap();
-        //     *population.genomes.get_mut(culled).unwrap() = to_copy_from;
-        //     species_tree
-        //         .order
-        //         .get_mut(new_designation.unwrap())
-        //         .unwrap()
-        //         .count += 1;
-        // }
+        for culled in culled_organisms {
+            let mut new_designation = None;
+            while new_designation.is_none() {
+                let attempted_conversion =
+                    rand::thread_rng().gen_range(0..species_tree.order.len());
+                let c = species_tree.order.get(attempted_conversion).unwrap().count;
+                if c > 0 {
+                    new_designation = Some(attempted_conversion);
+                }
+            }
+            let mut to_copy_from = species_tree
+                .order
+                .get(new_designation.unwrap())
+                .unwrap()
+                .representative
+                .clone();
+            to_copy_from.id = culled;
+            to_copy_from.species_id = new_designation.unwrap();
+            *population.genomes.get_mut(culled).unwrap() = to_copy_from;
+            species_tree
+                .order
+                .get_mut(new_designation.unwrap())
+                .unwrap()
+                .count += 1;
+        }
         let mut total_remaining = population.count;
         // println!("total-remaining: {}", total_remaining);
         let mut g_id = 0;
