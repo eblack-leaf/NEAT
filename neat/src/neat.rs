@@ -124,6 +124,7 @@ pub(crate) fn neat() {
                 .representative
                 .clone();
             to_copy_from.id = culled;
+            to_copy_from.species_id = new_designation.unwrap();
             *population.genomes.get_mut(culled).unwrap() = to_copy_from;
             species_tree
                 .order
@@ -132,10 +133,18 @@ pub(crate) fn neat() {
                 .count += 1;
         }
         let mut total_remaining = population.count;
+        println!("total-remaining: {}", total_remaining);
         let mut g_id = 0;
+        let mut last_species_id = species_tree.order.len();
+        for (i, s) in species_tree.order.iter().enumerate().rev() {
+            if !s.culled {
+                last_species_id = i;
+                break;
+            }
+        }
         for (species_id, species) in species_tree.order.iter().enumerate() {
             if species.count > 0 && !species.culled {
-                let requested_offspring = if species_id + 1 == species_tree.num_active_species() {
+                let requested_offspring = if species_id == last_species_id {
                     // println!("total-remaining: {} for species[{}].fitness: {} / total: {} = {} * population: {} = {}",
                     //          total_remaining,
                     //     species_id,
@@ -145,27 +154,28 @@ pub(crate) fn neat() {
                     //     population.count,
                     //          species.explicit_fitness_sharing / species_tree.total_fitness * population.count as f32
                     // );
+                    println!("total-remaining: {} for {}", total_remaining, species_id);
                     total_remaining
                 } else {
                     let species_percent =
                         species.explicit_fitness_sharing / species_tree.total_fitness;
                     let of_population = species_percent * population.count as f32;
-                    // println!(
-                    //     "species[{}].fitness: {} / total: {} = {} * population: {} = {}",
-                    //     species_id,
-                    //     species.explicit_fitness_sharing,
-                    //     species_tree.total_fitness,
-                    //     species_percent,
-                    //     population.count,
-                    //     of_population
-                    // );
+                    println!(
+                        "species[{}].fitness: {} / total: {} = {} * population: {} = {}",
+                        species_id,
+                        species.explicit_fitness_sharing,
+                        species_tree.total_fitness,
+                        species_percent,
+                        population.count,
+                        of_population
+                    );
                     let requested_offspring = of_population as usize;
                     total_remaining = total_remaining
                         .checked_sub(requested_offspring)
                         .unwrap_or_default();
                     requested_offspring
                 };
-                // println!("requested: {}", requested_offspring);
+                println!("requested[{}]: {}", species_id, requested_offspring);
                 let requested_offspring = if species.count > environment.champion_network_count {
                     let champion_id = *species
                         .current_organisms
@@ -193,7 +203,7 @@ pub(crate) fn neat() {
                 let normal = requested_offspring
                     .checked_sub(skip_crossover)
                     .unwrap_or_default();
-                // println!("skip: {} normal: {}", skip_crossover, normal);
+                println!("skip: {} normal: {}", skip_crossover, normal);
                 let mut species_selection = species
                     .current_organisms
                     .iter()
@@ -214,6 +224,7 @@ pub(crate) fn neat() {
                     .unwrap()
                     .to_vec();
                 if species_selection.is_empty() {
+                    total_remaining += requested_offspring;
                     // println!("skipping: {}", species_id);
                     continue;
                 }
