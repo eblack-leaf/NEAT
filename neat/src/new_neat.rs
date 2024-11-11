@@ -5,6 +5,7 @@ pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0],
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 pub(crate) const INPUT_DIM: usize = 2;
 pub(crate) const OUTPUT_DIM: usize = 1;
+pub(crate) const ACTIVATION_SCALE: f32 = 4.9;
 #[test]
 fn test() {
     let mut environment = Environment::new();
@@ -200,6 +201,13 @@ impl<V: Into<Vec<f32>>> From<V> for Input {
 pub(crate) struct Output {
     pub(crate) data: Vec<f32>,
 }
+
+impl Output {
+    fn new(solved: Vec<f32>) -> Self {
+        Self { data: solved }
+    }
+}
+
 impl<V: Into<Vec<f32>>> From<V> for Output {
     fn from(value: V) -> Self {
         Self { data: value.into() }
@@ -213,7 +221,14 @@ pub(crate) struct Population {
 
 impl Population {
     pub(crate) fn new(count: usize, input_dim: usize, output_dim: usize) -> Population {
-        todo!()
+        Self {
+            count,
+            genomes: (0..count)
+                .into_iter()
+                .map(|i| Genome::new(i, input_dim, output_dim))
+                .collect(),
+            next_gen: vec![],
+        }
     }
 }
 
@@ -226,21 +241,155 @@ pub(crate) struct Genome {
     pub(crate) node_id_gen: NodeId,
     pub(crate) species_id: SpeciesId,
     pub(crate) fitness: Fitness,
+    pub(crate) inputs: usize,
+    pub(crate) outputs: usize,
 }
 
 impl Genome {
-    pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
-        todo!()
+    pub(crate) fn new(id: GenomeId, inputs: usize, outputs: usize) -> Self {
+        let mut connections = vec![];
+        let mut nodes = vec![];
+
+        for input in 0..inputs {
+            nodes.push(Node::new(input, NodeType::Input));
+        }
+        for output in nodes.len() - 1..nodes.len() - 1 + outputs {
+            nodes.push(Node::new(output, NodeType::Output));
+        }
+        for bias in nodes.len() - 1..nodes.len() - 1 + outputs {
+            nodes.push(Node::new(bias, NodeType::Bias));
+        }
+        let node_id_gen = nodes.len() - 1;
+        let mut innovation = 0;
+        for i in 0..inputs {
+            for o in inputs..inputs + outputs {
+                let connection =
+                    Connection::new(i, o, rand::thread_rng().gen_range(0.0..1.0), innovation);
+                connections.push(connection);
+                innovation += 1;
+            }
+        }
+        for bias in outputs..outputs * 2 {
+            for o in inputs..inputs + outputs {
+                let connection =
+                    Connection::new(bias, o, rand::thread_rng().gen_range(0.0..1.0), innovation);
+                connections.push(connection);
+                innovation += 1;
+            }
+        }
+        Self {
+            id,
+            connections,
+            nodes,
+            node_id_gen,
+            species_id: 0,
+            fitness: 0.0,
+            inputs,
+            outputs,
+        }
     }
     pub(crate) fn activate<I: Into<Input>>(&self, input: I) -> Output {
-        todo!()
+        let input = input.into();
+        let mut solved_outputs = Output::new(vec![0.0; self.outputs]);
+        let mut solved = vec![false; self.outputs];
+        let mut summations = vec![0f32; self.nodes.len()];
+        let mut activated = vec![false; self.nodes.len()];
+        for i in 0..self.inputs {
+            *summations.get_mut(i).unwrap() = input.data[i];
+        }
+        for bias in (self.inputs + self.outputs)..(self.inputs + self.outputs * 2) {
+            *summations.get_mut(bias).unwrap() = 1.0;
+        }
+        const ABORT: usize = 20;
+        let mut abort = 0;
+        let non_input = self
+            .nodes
+            .iter()
+            .filter(|n| n.ty != NodeType::Input)
+            .copied()
+            .collect::<Vec<_>>();
+        while solved.iter().any(|s| *s == false) && abort < ABORT {
+            if abort == ABORT {
+                return solved_outputs;
+            }
+            for non in non_input.iter() {
+                let incoming = self
+                    .connections
+                    .iter()
+                    .filter(|c| c.to == non.id)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let current_values = incoming
+                    .iter()
+                    .map(|i| summations.get(i.from).copied().unwrap_or_default())
+                    .collect::<Vec<_>>();
+                let sum = current_values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| *a * incoming.get(i).unwrap().weight)
+                    .sum::<f32>();
+                *summations.get_mut(non.id).unwrap() += sum;
+                if activated.iter().any(|a| *a == true) {
+                    *activated.get_mut(non.id).unwrap() = true;
+                }
+            }
+            for non in non_input.iter() {
+                if *activated.get(non.id).unwrap() {
+                    let incoming = self
+                        .connections
+                        .iter()
+                        .filter(|c| c.to == non.id)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let current_values = incoming
+                        .iter()
+                        .map(|i| summations.get(i.from).copied().unwrap_or_default())
+                        .collect::<Vec<_>>();
+                    let out = current_values
+                        .iter()
+                        .enumerate()
+                        .map(|(i, a)| *a * incoming.get(i).unwrap().weight)
+                        .sum::<f32>();
+                    *summations.get_mut(non.id).unwrap() = out;
+                    for output_test in self.inputs..self.inputs + self.outputs {
+                        if output_test == non.id {
+                            solved[output_test - self.inputs] = true;
+                        }
+                    }
+                }
+            }
+            abort += 1;
+        }
+        for i in self.inputs..self.inputs + self.outputs {
+            solved_outputs.data[i - self.inputs] =
+                sigmoid(ACTIVATION_SCALE * summations.get(i).unwrap());
+        }
+        solved_outputs
     }
 }
+pub(crate) fn sigmoid(z: f32) -> f32 {
+    1.0 / (1.0 + (-z).exp())
+}
 pub(crate) type NodeId = usize;
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum NodeType {
+    Input,
+    Output,
+    Bias,
+    Hidden,
+}
 #[derive(Copy, Clone)]
 pub(crate) struct Node {
     pub(crate) id: NodeId,
+    pub(crate) ty: NodeType,
 }
+
+impl Node {
+    pub(crate) fn new(id: usize, ty: NodeType) -> Self {
+        todo!()
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Connection {
     pub(crate) from: NodeId,
@@ -248,6 +397,17 @@ pub(crate) struct Connection {
     pub(crate) weight: f32,
     pub(crate) enabled: bool,
     pub(crate) innovation: Innovation,
+}
+impl Connection {
+    pub(crate) fn new(from: NodeId, to: NodeId, weight: f32, innovation: Innovation) -> Self {
+        Self {
+            from,
+            to,
+            weight,
+            enabled: true,
+            innovation,
+        }
+    }
 }
 pub(crate) type Innovation = usize;
 pub(crate) struct ExistingInnovation {
@@ -354,7 +514,7 @@ impl SpeciesManager {
     pub(crate) fn new(population_count: usize, inputs: usize, outputs: usize) -> Self {
         Self {
             total_fitness: 0.0,
-            species: vec![Species::new(0, Genome::new(inputs, outputs))],
+            species: vec![Species::new(0, Genome::new(0, inputs, outputs))],
             species_id_gen: 0,
         }
     }
@@ -387,7 +547,7 @@ impl Runner {
             total_fitness: 0.0,
             next_gen_remaining: 0,
             to_cull: vec![],
-            best_genome: Genome::new(0, 0),
+            best_genome: Genome::new(0, 0, 0),
             mutations: vec![],
             lineage: vec![],
         }
