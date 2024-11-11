@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use rand::Rng;
+use std::collections::HashMap;
 
 pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]];
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
@@ -30,17 +30,25 @@ fn test() {
     let mut existing_innovation = ExistingInnovation::new(INPUT_DIM, OUTPUT_DIM);
     let mut runner = Runner::new(150, 3.9);
     for gen in 0..runner.generations {
+        let mut max_found = None;
         for genome in population.genomes.iter_mut() {
             genome.fitness = (evaluation.func)(genome, XOR_INPUT.into(), XOR_OUTPUT.into());
             if genome.fitness >= runner.limit {
-                runner.history.push(GenerationHistory::new(
-                    gen,
-                    genome.clone(),
-                    species_manager.total(),
-                ));
-                // TODO save history / print-out
-                return;
+                max_found.replace(genome.clone());
+                runner.limit = genome.fitness + Runner::NEW_LIMIT_DELTA;
             }
+        }
+        if let Some(max) = max_found {
+            runner.history.push(GenerationHistory::new(
+                gen,
+                max.clone(),
+                max.clone(),
+                species_manager.total(),
+                runner.mutations.drain(..).collect::<Vec<_>>(),
+                runner.lineage.drain(..).collect::<Vec<_>>(),
+            ));
+            // TODO save history / print-out
+            return;
         }
         for species in species_manager.species.iter_mut() {
             let max = species
@@ -71,12 +79,16 @@ fn test() {
             .min_by(|a, b| a.fitness.partial_cmp(&b.fitness).unwrap())
             .unwrap()
             .fitness;
-        runner.best_genome = population
+        let current_best = population
             .genomes
             .iter()
-            .max_by(|a, b| a.fitness.partial_cmp(&b.fitness).unwrap()).cloned()
+            .max_by(|a, b| a.fitness.partial_cmp(&b.fitness).unwrap())
+            .cloned()
             .unwrap();
-        runner.max_fitness = runner.best_genome.fitness;
+        if current_best.fitness > runner.best_genome.fitness {
+            runner.best_genome = current_best.clone();
+        }
+        runner.max_fitness = current_best.fitness;
         runner.fitness_range = (runner.max_fitness - runner.min_fitness).max(1.0);
         for species in species_manager.species.iter_mut() {
             species.explicit_fitness_sharing = 0.0;
@@ -118,15 +130,27 @@ fn test() {
                 .max(1);
             let elites = members.get(0..elite_bound).unwrap().to_vec();
             for _om in 0..only_mutate as usize {
-                let selected = elites.get(rand::thread_rng().gen_range(0..elites.len())).cloned().unwrap();
+                let selected = elites
+                    .get(rand::thread_rng().gen_range(0..elites.len()))
+                    .cloned()
+                    .unwrap();
                 let mutated = environment.mutate(selected, &mut existing_innovation);
                 population.next_gen.push(mutated);
             }
             for _tc in 0..to_crossover as usize {
-                let parent1 = elites.get(rand::thread_rng().gen_range(0..elites.len())).cloned().unwrap();
-                let mut parent2 = elites.get(rand::thread_rng().gen_range(0..elites.len())).cloned().unwrap();
+                let parent1 = elites
+                    .get(rand::thread_rng().gen_range(0..elites.len()))
+                    .cloned()
+                    .unwrap();
+                let mut parent2 = elites
+                    .get(rand::thread_rng().gen_range(0..elites.len()))
+                    .cloned()
+                    .unwrap();
                 while parent1.id == parent2.id && elites.len() > 1 {
-                    parent2 = elites.get(rand::thread_rng().gen_range(0..elites.len())).cloned().unwrap();
+                    parent2 = elites
+                        .get(rand::thread_rng().gen_range(0..elites.len()))
+                        .cloned()
+                        .unwrap();
                 }
                 let (best, other) = if parent1.fitness > parent2.fitness {
                     (parent1, parent2)
@@ -144,9 +168,16 @@ fn test() {
                 population.next_gen.push(mutated_crossover);
             }
         }
+        runner.history.push(GenerationHistory::new(
+            gen,
+            runner.best_genome.clone(),
+            current_best,
+            species_manager.total(),
+            runner.mutations.drain(..).collect(),
+            runner.lineage.drain(..).collect(),
+        ));
         population.genomes = population.next_gen.drain(..).collect();
         species_manager.speciate(&mut population.genomes);
-        runner.history.push(GenerationHistory::new(gen, runner.best_genome.clone(), species_manager.total()));
     }
 }
 pub(crate) struct Data {
@@ -201,9 +232,6 @@ impl Genome {
     pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
         todo!()
     }
-}
-
-impl Genome {
     pub(crate) fn activate<I: Into<Input>>(&self, input: I) -> Output {
         todo!()
     }
@@ -280,7 +308,7 @@ pub(crate) struct Species {
     pub(crate) explicit_fitness_sharing: Fitness,
     pub(crate) max_fitness: Fitness,
     pub(crate) last_improvement: Generation,
-    percent_total: f32,
+    pub(crate) percent_total: f32,
 }
 
 impl Species {
@@ -296,6 +324,14 @@ pub(crate) struct Compatibility {
     pub(crate) n: f32,
 }
 impl Compatibility {
+    pub(crate) fn new(a: &Genome, b: &Genome) -> Self {
+        Self {
+            excess: 0.0,
+            disjoint: 0.0,
+            weight_difference: 0.0,
+            n: 0.0,
+        }
+    }
     pub(crate) fn distance(&self, environment: Environment) -> f32 {
         todo!()
     }
@@ -306,20 +342,16 @@ pub(crate) struct SpeciesManager {
     pub(crate) species_id_gen: SpeciesId,
 }
 
-impl SpeciesManager {
-    pub(crate) fn speciate(&self, genomes: &mut Vec<Genome>) {
-        todo!()
-    }
-}
+impl SpeciesManager {}
 
 impl SpeciesManager {
     pub(crate) fn total(&self) -> usize {
         todo!()
     }
-}
-
-impl SpeciesManager {
-    fn new(population_count: usize, inputs: usize, outputs: usize) -> Self {
+    pub(crate) fn speciate(&self, genomes: &mut Vec<Genome>) {
+        todo!()
+    }
+    pub(crate) fn new(population_count: usize, inputs: usize, outputs: usize) -> Self {
         Self {
             total_fitness: 0.0,
             species: vec![Species::new(0, Genome::new(inputs, outputs))],
@@ -339,8 +371,11 @@ pub(crate) struct Runner {
     pub(crate) next_gen_remaining: usize,
     pub(crate) to_cull: Vec<SpeciesId>,
     pub(crate) best_genome: Genome,
+    pub(crate) mutations: Vec<MutationHistory>,
+    pub(crate) lineage: Vec<Lineage>,
 }
 impl Runner {
+    pub(crate) const NEW_LIMIT_DELTA: f32 = 0.0000001;
     pub(crate) fn new(generations: Generation, limit: Fitness) -> Self {
         Self {
             history: vec![],
@@ -353,21 +388,56 @@ impl Runner {
             next_gen_remaining: 0,
             to_cull: vec![],
             best_genome: Genome::new(0, 0),
+            mutations: vec![],
+            lineage: vec![],
         }
     }
 }
+pub(crate) struct Lineage {
+    pub(crate) best: Genome,
+    pub(crate) other: Genome,
+    pub(crate) crossover: Genome,
+}
+impl Lineage {
+    pub(crate) fn new(best: Genome, other: Genome, crossover: Genome) -> Self {
+        Self {
+            best,
+            other,
+            crossover,
+        }
+    }
+}
+pub(crate) enum MutationHistory {
+    Node(NodeMutation),
+    Connection(ConnectionMutation),
+}
+pub(crate) struct NodeMutation {}
+pub(crate) struct ConnectionMutation {}
 pub(crate) struct GenerationHistory {
     pub(crate) generation: Generation,
     pub(crate) best: Genome,
+    pub(crate) top_of_generation: Genome,
     pub(crate) total_species: usize,
+    pub(crate) mutations: Vec<MutationHistory>,
+    pub(crate) lineage: Vec<Lineage>,
 }
 
 impl GenerationHistory {
-    fn new(generation: Generation, best: Genome, total_species: usize) -> GenerationHistory {
+    pub(crate) fn new(
+        generation: Generation,
+        best: Genome,
+        top_of_generation: Genome,
+        total_species: usize,
+        mutations: Vec<MutationHistory>,
+        lineage: Vec<Lineage>,
+    ) -> GenerationHistory {
         Self {
             generation,
             best,
+            top_of_generation,
             total_species,
+            mutations,
+            lineage,
         }
     }
 }
@@ -385,14 +455,17 @@ pub(crate) struct Environment {
     pub(crate) inherit_disable: f32,
 }
 
+impl Environment {}
+
 impl Environment {
     pub(crate) fn crossover(&self, best: Genome, other: Genome) -> Genome {
         todo!()
     }
-}
-
-impl Environment {
-    pub(crate) fn mutate(&self, genome: Genome, existing_innovation: &mut ExistingInnovation) -> Genome {
+    pub(crate) fn mutate(
+        &self,
+        genome: Genome,
+        existing_innovation: &mut ExistingInnovation,
+    ) -> Genome {
         todo!()
     }
 }
