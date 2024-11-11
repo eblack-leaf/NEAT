@@ -201,7 +201,8 @@ pub(crate) fn neat() {
                                 .fitness
                                 .partial_cmp(&population.genomes.get(*r).unwrap().fitness)
                                 .unwrap()
-                        }).unwrap_or_default();
+                        })
+                        .unwrap_or_default();
                     let mut champion = population.genomes.get(champion_id).unwrap().clone();
                     champion.id = g_id;
                     next_gen.push(champion);
@@ -266,7 +267,12 @@ pub(crate) fn neat() {
             species_tree.clone(),
             population.genomes.clone(),
         );
-        println!("metrics: {} @ {} active-species: {}", metrics.best_genome, g, species_tree.num_active_species());
+        println!(
+            "metrics: {} @ {} active-species: {}",
+            metrics.best_genome,
+            g,
+            species_tree.num_active_species()
+        );
         evaluation.history.push(metrics);
         population.genomes = next_gen;
         species_tree.speciate(&mut population.genomes, &compatibility);
