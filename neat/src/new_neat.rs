@@ -5,7 +5,6 @@ pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0],
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 pub(crate) const INPUT_DIM: usize = 2;
 pub(crate) const OUTPUT_DIM: usize = 1;
-pub(crate) const ACTIVATION_SCALE: f32 = 4.9;
 #[test]
 fn test() {
     let mut environment = Environment::new();
@@ -288,53 +287,55 @@ impl Genome {
             outputs,
         }
     }
+    pub(crate) fn max_depth(&self) -> usize {
+        let mut max = 0;
+        for o in self.inputs..(self.inputs + self.outputs) {
+           let current = self.depth(0, o);
+            if current > max {
+                max = current;
+            }
+        }
+        max
+    }
+    pub(crate) fn depth(&self, count: usize, to: NodeId) -> usize {
+        let mut max = count;
+        if count > 100 { return 10; }
+        for c in self.connections.iter() {
+            if c.to == to {
+                let current = self.depth(count + 1, c.from);
+                if current > max {
+                    max = current;
+                }
+            }
+        }
+        max
+    }
     pub(crate) fn activate<I: Into<Input>>(&self, input: I) -> Output {
         let input = input.into();
         let mut solved_outputs = Output::new(vec![0.0; self.outputs]);
-        let mut solved = vec![false; self.outputs];
-        let mut summations = vec![0f32; self.nodes.len()];
-        let mut activated = vec![false; self.nodes.len()];
-        for i in 0..self.inputs {
-            *summations.get_mut(i).unwrap() = input.data[i];
-        }
-        for bias in (self.inputs + self.outputs)..(self.inputs + self.outputs * 2) {
-            *summations.get_mut(bias).unwrap() = 1.0;
-        }
-        const ABORT: usize = 20;
-        let mut abort = 0;
-        let non_input = self
-            .nodes
-            .iter()
-            .filter(|n| n.ty != NodeType::Input)
-            .copied()
-            .collect::<Vec<_>>();
-        while solved.iter().any(|s| *s == false) && abort < ABORT {
-            if abort == ABORT {
-                return solved_outputs;
+        for _relax in 0..self.max_depth().max(1) {
+            let mut solved = vec![false; self.outputs];
+            let mut summations = vec![0f32; self.nodes.len()];
+            let mut activated = vec![false; self.nodes.len()];
+            for i in 0..self.inputs {
+                *summations.get_mut(i).unwrap() = input.data[i];
             }
-            for non in non_input.iter() {
-                let incoming = self
-                    .connections
-                    .iter()
-                    .filter(|c| c.to == non.id)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let current_values = incoming
-                    .iter()
-                    .map(|i| summations.get(i.from).copied().unwrap_or_default())
-                    .collect::<Vec<_>>();
-                let sum = current_values
-                    .iter()
-                    .enumerate()
-                    .map(|(i, a)| *a * incoming.get(i).unwrap().weight)
-                    .sum::<f32>();
-                *summations.get_mut(non.id).unwrap() += sum;
-                if activated.iter().any(|a| *a == true) {
-                    *activated.get_mut(non.id).unwrap() = true;
+            for bias in (self.inputs + self.outputs)..(self.inputs + self.outputs * 2) {
+                *summations.get_mut(bias).unwrap() = 1.0;
+            }
+            const ABORT: usize = 20;
+            let mut abort = 0;
+            let non_input = self
+                .nodes
+                .iter()
+                .filter(|n| n.ty != NodeType::Input)
+                .copied()
+                .collect::<Vec<_>>();
+            while solved.iter().any(|s| *s == false) && abort < ABORT {
+                if abort == ABORT {
+                    return solved_outputs;
                 }
-            }
-            for non in non_input.iter() {
-                if *activated.get(non.id).unwrap() {
+                for non in non_input.iter() {
                     let incoming = self
                         .connections
                         .iter()
@@ -345,24 +346,47 @@ impl Genome {
                         .iter()
                         .map(|i| summations.get(i.from).copied().unwrap_or_default())
                         .collect::<Vec<_>>();
-                    let out = current_values
+                    let sum = current_values
                         .iter()
                         .enumerate()
                         .map(|(i, a)| *a * incoming.get(i).unwrap().weight)
                         .sum::<f32>();
-                    *summations.get_mut(non.id).unwrap() = out;
-                    for output_test in self.inputs..self.inputs + self.outputs {
-                        if output_test == non.id {
-                            solved[output_test - self.inputs] = true;
+                    *summations.get_mut(non.id).unwrap() += sum;
+                    if activated.iter().any(|a| *a == true) {
+                        *activated.get_mut(non.id).unwrap() = true;
+                    }
+                }
+                for non in non_input.iter() {
+                    if *activated.get(non.id).unwrap() {
+                        let incoming = self
+                            .connections
+                            .iter()
+                            .filter(|c| c.to == non.id)
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        let current_values = incoming
+                            .iter()
+                            .map(|i| summations.get(i.from).copied().unwrap_or_default())
+                            .collect::<Vec<_>>();
+                        let out = current_values
+                            .iter()
+                            .enumerate()
+                            .map(|(i, a)| *a * incoming.get(i).unwrap().weight)
+                            .sum::<f32>();
+                        *summations.get_mut(non.id).unwrap() = out;
+                        for output_test in self.inputs..self.inputs + self.outputs {
+                            if output_test == non.id {
+                                solved[output_test - self.inputs] = true;
+                            }
                         }
                     }
                 }
+                abort += 1;
             }
-            abort += 1;
-        }
-        for i in self.inputs..self.inputs + self.outputs {
-            solved_outputs.data[i - self.inputs] =
-                sigmoid(ACTIVATION_SCALE * summations.get(i).unwrap());
+            for i in self.inputs..self.inputs + self.outputs {
+                solved_outputs.data[i - self.inputs] =
+                    sigmoid(Runner::ACTIVATION_SCALE * summations.get(i).unwrap());
+            }
         }
         solved_outputs
     }
@@ -536,6 +560,7 @@ pub(crate) struct Runner {
 }
 impl Runner {
     pub(crate) const NEW_LIMIT_DELTA: f32 = 0.0000001;
+    pub(crate) const ACTIVATION_SCALE: f32 = 4.9;
     pub(crate) fn new(generations: Generation, limit: Fitness) -> Self {
         Self {
             history: vec![],
@@ -689,28 +714,28 @@ impl Environment {
         self.inherit_disable = inherit_disable;
     }
 }
-pub(crate) fn creates_cycle(from: NodeId, to: NodeId, genome: &Genome) -> bool {
-    if from == to {
-        return true;
-    }
-    let mut visited = vec![to];
-    while true {
-        let mut num_added = 0;
-        for c in genome.connections.iter() {
-            if visited.iter().find(|v| **v == c.from).is_some()
-                && visited.iter().find(|v| **v == c.to).is_none()
-            {
-                if c.to == from {
-                    return true;
-                } else {
-                    visited.push(c.to);
-                    num_added += 1;
-                }
-            }
-        }
-        if num_added == 0 {
-            return false;
-        }
-    }
-    false
-}
+// pub(crate) fn creates_cycle(from: NodeId, to: NodeId, genome: &Genome) -> bool {
+//     if from == to {
+//         return true;
+//     }
+//     let mut visited = vec![to];
+//     while true {
+//         let mut num_added = 0;
+//         for c in genome.connections.iter() {
+//             if visited.iter().find(|v| **v == c.from).is_some()
+//                 && visited.iter().find(|v| **v == c.to).is_none()
+//             {
+//                 if c.to == from {
+//                     return true;
+//                 } else {
+//                     visited.push(c.to);
+//                     num_added += 1;
+//                 }
+//             }
+//         }
+//         if num_added == 0 {
+//             return false;
+//         }
+//     }
+//     false
+// }
