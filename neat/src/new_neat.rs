@@ -245,6 +245,7 @@ pub(crate) struct Genome {
 }
 
 impl Genome {
+    pub(crate) const ACTIVATION_SCALE: f32 = 4.9;
     pub(crate) fn new(id: GenomeId, inputs: usize, outputs: usize) -> Self {
         let mut connections = vec![];
         let mut nodes = vec![];
@@ -385,7 +386,7 @@ impl Genome {
             }
             for i in self.inputs..self.inputs + self.outputs {
                 solved_outputs.data[i - self.inputs] =
-                    sigmoid(Runner::ACTIVATION_SCALE * summations.get(i).unwrap());
+                    sigmoid(Self::ACTIVATION_SCALE * summations.get(i).unwrap());
             }
         }
         solved_outputs
@@ -560,7 +561,6 @@ pub(crate) struct Runner {
 }
 impl Runner {
     pub(crate) const NEW_LIMIT_DELTA: f32 = 0.0000001;
-    pub(crate) const ACTIVATION_SCALE: f32 = 4.9;
     pub(crate) fn new(generations: Generation, limit: Fitness) -> Self {
         Self {
             history: vec![],
