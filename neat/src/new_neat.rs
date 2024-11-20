@@ -318,14 +318,16 @@ impl Genome {
             let mut solved = vec![false; self.outputs];
             let mut summations = vec![0f32; self.nodes.len()];
             let mut activations = vec![0f32; self.nodes.len()];
-            let mut activated = vec![false; self.nodes.len()];
+            let mut valid = vec![false; self.nodes.len()];
             for i in 0..self.inputs {
+                *activations.get_mut(i).unwrap() = input.data[i];
                 *summations.get_mut(i).unwrap() = input.data[i];
-                *activated.get_mut(i).unwrap() = true;
+                *valid.get_mut(i).unwrap() = true;
             }
             for bias in (self.inputs + self.outputs)..(self.inputs + self.outputs * 2) {
+                *activations.get_mut(bias).unwrap() = 1.0;
                 *summations.get_mut(bias).unwrap() = 1.0;
-                *activated.get_mut(bias).unwrap() = true;
+                *valid.get_mut(bias).unwrap() = true;
             }
             const ABORT: usize = 20;
             let mut abort = 0;
@@ -341,7 +343,7 @@ impl Genome {
                 }
                 for non in non_input.iter() {
                     *summations.get_mut(non.id).unwrap() = 0.0;
-                    *activated.get_mut(non.id).unwrap() = false;
+                    *valid.get_mut(non.id).unwrap() = false;
                     let incoming = self
                         .connections
                         .iter()
@@ -358,12 +360,12 @@ impl Genome {
                         .map(|(i, a)| *a * incoming.get(i).unwrap().weight)
                         .sum::<f32>();
                     *summations.get_mut(non.id).unwrap() += sum;
-                    if activated.iter().any(|a| *a == true) {
-                        *activated.get_mut(non.id).unwrap() = true;
+                    if valid.iter().any(|a| *a == true) {
+                        *valid.get_mut(non.id).unwrap() = true;
                     }
                 }
                 for non in non_input.iter() {
-                    if *activated.get(non.id).unwrap() {
+                    if *valid.get(non.id).unwrap() {
                         let incoming = self
                             .connections
                             .iter()
