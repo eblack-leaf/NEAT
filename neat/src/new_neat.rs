@@ -320,9 +320,11 @@ impl Genome {
             let mut activated = vec![false; self.nodes.len()];
             for i in 0..self.inputs {
                 *summations.get_mut(i).unwrap() = input.data[i];
+                *activated.get_mut(i).unwrap() = true;
             }
             for bias in (self.inputs + self.outputs)..(self.inputs + self.outputs * 2) {
                 *summations.get_mut(bias).unwrap() = 1.0;
+                *activated.get_mut(bias).unwrap() = true;
             }
             const ABORT: usize = 20;
             let mut abort = 0;
@@ -337,6 +339,8 @@ impl Genome {
                     return solved_outputs;
                 }
                 for non in non_input.iter() {
+                    *summations.get_mut(non.id).unwrap() = 0.0;
+                    *activated.get_mut(non.id).unwrap() = false;
                     let incoming = self
                         .connections
                         .iter()
