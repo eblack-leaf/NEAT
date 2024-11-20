@@ -317,6 +317,7 @@ impl Genome {
         for _relax in 0..self.max_depth().max(1) {
             let mut solved = vec![false; self.outputs];
             let mut summations = vec![0f32; self.nodes.len()];
+            let mut activations = vec![0f32; self.nodes.len()];
             let mut activated = vec![false; self.nodes.len()];
             for i in 0..self.inputs {
                 *summations.get_mut(i).unwrap() = input.data[i];
@@ -349,7 +350,7 @@ impl Genome {
                         .collect::<Vec<_>>();
                     let current_values = incoming
                         .iter()
-                        .map(|i| summations.get(i.from).copied().unwrap_or_default())
+                        .map(|i| activations.get(i.from).copied().unwrap_or_default())
                         .collect::<Vec<_>>();
                     let sum = current_values
                         .iter()
@@ -378,7 +379,7 @@ impl Genome {
                             .enumerate()
                             .map(|(i, a)| *a * incoming.get(i).unwrap().weight)
                             .sum::<f32>();
-                        *summations.get_mut(non.id).unwrap() = out;
+                        *activations.get_mut(non.id).unwrap() = sigmoid(Self::ACTIVATION_SCALE * out);
                         for output_test in self.inputs..self.inputs + self.outputs {
                             if output_test == non.id {
                                 solved[output_test - self.inputs] = true;
@@ -389,8 +390,7 @@ impl Genome {
                 abort += 1;
             }
             for i in self.inputs..self.inputs + self.outputs {
-                solved_outputs.data[i - self.inputs] =
-                    sigmoid(Self::ACTIVATION_SCALE * summations.get(i).unwrap());
+                solved_outputs.data[i - self.inputs] = *activations.get(i).unwrap();
             }
         }
         solved_outputs
