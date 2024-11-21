@@ -7,26 +7,30 @@ pub(crate) const INPUT_DIM: usize = 2;
 pub(crate) const OUTPUT_DIM: usize = 1;
 #[test]
 fn test() {
-    let mut environment = Environment::new();
+    let mut environment = Environment::new(INPUT_DIM, OUTPUT_DIM);
     environment.set_c1(1.0);
     environment.set_c2(1.0);
     environment.set_c3(0.4);
+    environment.set_compatibility_threshold(3.0);
     environment.set_elitism(0.3);
     environment.set_stagnation_threshold(15);
     environment.set_add_connection(0.05);
     environment.set_add_node(0.03);
     environment.set_inherit_disable(0.75);
     environment.set_only_mutate(0.25);
+    environment.set_connection_weight(0.8);
+    environment.set_perturb(0.9);
     let evaluation = Evaluation::new(|genome: &Genome, input: Data, actual: Output| -> Fitness {
         let mut fitness = 4.0;
         for (i, xi) in input.data.iter().enumerate() {
-            let output = genome.activate(xi);
+            let output = genome.activate(xi.to_vec());
             fitness -= (output.data[0] - actual.data[i]).powi(2);
         }
         fitness
     });
     let mut population = Population::new(150, INPUT_DIM, OUTPUT_DIM);
-    let mut species_manager = SpeciesManager::new(population.count, INPUT_DIM, OUTPUT_DIM);
+    let mut species_manager = SpeciesManager::new(INPUT_DIM, OUTPUT_DIM);
+    species_manager.speciate(&mut population.genomes, &environment, 0);
     let mut existing_innovation = ExistingInnovation::new(INPUT_DIM, OUTPUT_DIM);
     let mut runner = Runner::new(150, 3.9);
     for gen in 0..runner.generations {
@@ -62,16 +66,20 @@ fn test() {
                 species.last_improvement = gen;
             }
             if gen > species.last_improvement + environment.stagnation_threshold {
-                // cull
                 runner.to_cull.push(species.id);
             }
         }
         for culled in runner.to_cull.drain(..) {
             if species_manager.species.len() == 1 {
-                // reset somehow
-                return;
+                // reset somehow?
+                continue;
             }
-            // remove all members from population so cannot be selected for reproduction
+            let idx = species_manager
+                .species
+                .iter()
+                .position(|s| s.id == culled)
+                .unwrap();
+            species_manager.species.remove(idx);
         }
         runner.min_fitness = population
             .genomes
@@ -109,6 +117,7 @@ fn test() {
             species.percent_total = species.explicit_fitness_sharing / runner.total_fitness;
         }
         runner.next_gen_remaining = population.count;
+        runner.next_gen_id = 0;
         for species in species_manager.species.iter_mut() {
             let mut offspring_count = (species.percent_total * population.count as f32).floor();
             runner.next_gen_remaining -= offspring_count as usize;
@@ -134,7 +143,10 @@ fn test() {
                     .get(rand::thread_rng().gen_range(0..elites.len()))
                     .cloned()
                     .unwrap();
-                let mutated = environment.mutate(selected, &mut existing_innovation);
+                let mut mutated =
+                    environment.mutate(selected, &mut existing_innovation, &environment);
+                mutated.id = runner.next_gen_id;
+                runner.next_gen_id += 1;
                 population.next_gen.push(mutated);
             }
             for _tc in 0..to_crossover as usize {
@@ -163,8 +175,11 @@ fn test() {
                         (parent1, parent2)
                     }
                 };
-                let crossover = environment.crossover(best, other);
-                let mutated_crossover = environment.mutate(crossover, &mut existing_innovation);
+                let crossover =
+                    environment.crossover(runner.next_gen_id, best, other, &environment);
+                runner.next_gen_id += 1;
+                let mutated_crossover =
+                    environment.mutate(crossover, &mut existing_innovation, &environment);
                 population.next_gen.push(mutated_crossover);
             }
         }
@@ -177,7 +192,7 @@ fn test() {
             runner.lineage.drain(..).collect(),
         ));
         population.genomes = population.next_gen.drain(..).collect();
-        species_manager.speciate(&mut population.genomes);
+        species_manager.speciate(&mut population.genomes, &environment, gen);
     }
 }
 pub(crate) struct Data {
@@ -291,7 +306,7 @@ impl Genome {
     pub(crate) fn max_depth(&self) -> usize {
         let mut max = 0;
         for o in self.inputs..(self.inputs + self.outputs) {
-           let current = self.depth(0, o);
+            let current = self.depth(0, o);
             if current > max {
                 max = current;
             }
@@ -300,7 +315,9 @@ impl Genome {
     }
     pub(crate) fn depth(&self, count: usize, to: NodeId) -> usize {
         let mut max = count;
-        if count > 100 { return 10; }
+        if count > 100 {
+            return 10;
+        }
         for c in self.connections.iter() {
             if c.to == to {
                 let current = self.depth(count + 1, c.from);
@@ -314,10 +331,10 @@ impl Genome {
     pub(crate) fn activate<I: Into<Input>>(&self, input: I) -> Output {
         let input = input.into();
         let mut solved_outputs = Output::new(vec![0.0; self.outputs]);
+        let mut summations = vec![0f32; self.nodes.len()];
+        let mut activations = vec![0f32; self.nodes.len()];
         for _relax in 0..self.max_depth().max(1) {
             let mut solved = vec![false; self.outputs];
-            let mut summations = vec![0f32; self.nodes.len()];
-            let mut activations = vec![0f32; self.nodes.len()];
             let mut valid = vec![false; self.nodes.len()];
             for i in 0..self.inputs {
                 *activations.get_mut(i).unwrap() = input.data[i];
@@ -366,22 +383,9 @@ impl Genome {
                 }
                 for non in non_input.iter() {
                     if *valid.get(non.id).unwrap() {
-                        let incoming = self
-                            .connections
-                            .iter()
-                            .filter(|c| c.to == non.id)
-                            .cloned()
-                            .collect::<Vec<_>>();
-                        let current_values = incoming
-                            .iter()
-                            .map(|i| summations.get(i.from).copied().unwrap_or_default())
-                            .collect::<Vec<_>>();
-                        let out = current_values
-                            .iter()
-                            .enumerate()
-                            .map(|(i, a)| *a * incoming.get(i).unwrap().weight)
-                            .sum::<f32>();
-                        *activations.get_mut(non.id).unwrap() = sigmoid(Self::ACTIVATION_SCALE * out);
+                        let out = summations.get(non.id).copied().unwrap();
+                        *activations.get_mut(non.id).unwrap() =
+                            sigmoid(Self::ACTIVATION_SCALE * out);
                         for output_test in self.inputs..self.inputs + self.outputs {
                             if output_test == non.id {
                                 solved[output_test - self.inputs] = true;
@@ -417,7 +421,7 @@ pub(crate) struct Node {
 
 impl Node {
     pub(crate) fn new(id: usize, ty: NodeType) -> Self {
-        todo!()
+        Self { id, ty }
     }
 }
 
@@ -447,7 +451,7 @@ pub(crate) struct ExistingInnovation {
 }
 
 impl ExistingInnovation {
-    fn new(inputs: usize, outputs: usize) -> Self {
+    pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
         let mut innov = 0;
         Self {
             existing: {
@@ -503,8 +507,16 @@ pub(crate) struct Species {
 }
 
 impl Species {
-    pub(crate) fn new(id: SpeciesId, representative: Genome) -> Species {
-        todo!()
+    pub(crate) fn new(id: SpeciesId, representative: Genome, gen: Generation) -> Species {
+        Self {
+            id,
+            members: vec![representative.id],
+            representative,
+            explicit_fitness_sharing: 0.0,
+            max_fitness: 0.0,
+            last_improvement: gen,
+            percent_total: 0.0,
+        }
     }
 }
 
@@ -515,16 +527,59 @@ pub(crate) struct Compatibility {
     pub(crate) n: f32,
 }
 impl Compatibility {
-    pub(crate) fn new(a: &Genome, b: &Genome) -> Self {
+    pub(crate) fn new(better: &Genome, other: &Genome) -> Self {
+        let mut excess = 0.0;
+        let mut disjoint = 0.0;
+        let mut weight_difference = 0.0;
+        let mut num_weights = 0.0;
+        let lesser_innovation_max = other
+            .connections
+            .iter()
+            .map(|c| c.innovation)
+            .max()
+            .unwrap_or_default();
+        for conn in better.connections.iter() {
+            let other_gene = other
+                .connections
+                .iter()
+                .find(|c| c.innovation == conn.innovation);
+            if let Some(matching) = other_gene {
+                weight_difference += conn.weight - matching.weight;
+                num_weights += 1.0;
+            }
+            if conn.innovation > lesser_innovation_max {
+                excess += 1.0;
+            } else if other_gene.is_none() {
+                disjoint += 1.0;
+            }
+        }
+        let lesser_node_id_max = other
+            .nodes
+            .iter()
+            .max_by(|a, b| a.id.partial_cmp(&b.id).unwrap())
+            .cloned()
+            .unwrap_or(Node::new(0, NodeType::Hidden))
+            .id;
+        for node in better.nodes.iter() {
+            if node.id > lesser_node_id_max {
+                excess += 1.0;
+            } else if other.nodes.iter().find(|n| n.id == node.id).is_none() {
+                disjoint += 1.0;
+            }
+        }
+        let n = better.connections.len().max(other.connections.len());
+        let n = if n < 20 { 1.0 } else { n as f32 };
         Self {
-            excess: 0.0,
-            disjoint: 0.0,
-            weight_difference: 0.0,
-            n: 0.0,
+            excess,
+            disjoint,
+            weight_difference: weight_difference / num_weights,
+            n,
         }
     }
-    pub(crate) fn distance(&self, environment: Environment) -> f32 {
-        todo!()
+    pub(crate) fn distance(&self, environment: &Environment) -> f32 {
+        environment.c1 * self.excess / self.n
+            + environment.c2 * self.disjoint / self.n
+            + environment.c3 * self.weight_difference
     }
 }
 pub(crate) struct SpeciesManager {
@@ -533,19 +588,52 @@ pub(crate) struct SpeciesManager {
     pub(crate) species_id_gen: SpeciesId,
 }
 
-impl SpeciesManager {}
-
 impl SpeciesManager {
     pub(crate) fn total(&self) -> usize {
-        todo!()
+        self.species.len()
     }
-    pub(crate) fn speciate(&self, genomes: &mut Vec<Genome>) {
-        todo!()
+    pub(crate) fn speciate(
+        &mut self,
+        genomes: &mut Vec<Genome>,
+        environment: &Environment,
+        gen: Generation,
+    ) {
+        for species in self.species.iter_mut() {
+            species.members.clear();
+        }
+        for genome in genomes.iter_mut() {
+            let mut found = None;
+            for species in self.species.iter() {
+                let distance =
+                    Compatibility::new(&species.representative, &genome).distance(environment);
+                if distance.abs() < environment.compatibility_threshold {
+                    found = Some(species.id);
+                    break;
+                }
+            }
+            if let Some(f) = found {
+                let idx = self.species.iter().position(|s| s.id == f).unwrap();
+                self.species.get_mut(idx).unwrap().members.push(genome.id);
+                genome.species_id = f;
+            } else {
+                let id = self.species_id_gen;
+                self.species_id_gen += 1;
+                self.species.push(Species::new(id, genome.clone(), gen));
+            }
+        }
+        for species in self.species.iter_mut() {
+            if !species.members.is_empty() {
+                let rand_idx = rand::thread_rng().gen_range(0..species.members.len());
+                let rand_rep = *species.members.get(rand_idx).unwrap();
+                let representative = genomes.get(rand_rep).unwrap().clone();
+                species.representative = representative;
+            }
+        }
     }
-    pub(crate) fn new(population_count: usize, inputs: usize, outputs: usize) -> Self {
+    pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
         Self {
             total_fitness: 0.0,
-            species: vec![Species::new(0, Genome::new(0, inputs, outputs))],
+            species: vec![Species::new(0, Genome::new(0, inputs, outputs), 0)],
             species_id_gen: 0,
         }
     }
@@ -564,6 +652,7 @@ pub(crate) struct Runner {
     pub(crate) best_genome: Genome,
     pub(crate) mutations: Vec<MutationHistory>,
     pub(crate) lineage: Vec<Lineage>,
+    pub(crate) next_gen_id: usize,
 }
 impl Runner {
     pub(crate) const NEW_LIMIT_DELTA: f32 = 0.0000001;
@@ -581,6 +670,7 @@ impl Runner {
             best_genome: Genome::new(0, 0, 0),
             mutations: vec![],
             lineage: vec![],
+            next_gen_id: 0,
         }
     }
 }
@@ -637,111 +727,215 @@ pub(crate) struct Environment {
     pub(crate) c1: f32,
     pub(crate) c2: f32,
     pub(crate) c3: f32,
-    pub(crate) threshold: f32,
+    pub(crate) compatibility_threshold: f32,
     pub(crate) elitism: f32,
     pub(crate) only_mutate: f32,
     pub(crate) stagnation_threshold: Generation,
     pub(crate) add_node: f32,
     pub(crate) add_connection: f32,
     pub(crate) inherit_disable: f32,
+    pub(crate) connection_weight: f32,
+    pub(crate) perturb: f32,
+    pub(crate) inputs: usize,
+    pub(crate) outputs: usize,
 }
 
-impl Environment {}
-
 impl Environment {
-    pub(crate) fn crossover(&self, best: Genome, other: Genome) -> Genome {
-        todo!()
+    pub(crate) fn crossover(
+        &self,
+        id: GenomeId,
+        best: Genome,
+        other: Genome,
+        environment: &Environment,
+    ) -> Genome {
+        let mut child = Genome::new(id, 0, 0);
+        for conn in best.connections.iter() {
+            let mut gene = conn.clone();
+            if let Some(matching) = other
+                .connections
+                .iter()
+                .find(|c| c.innovation == conn.innovation)
+            {
+                if rand::thread_rng().gen_range(0.0..1.0) < 0.5 {
+                    gene = matching.clone();
+                }
+                if rand::thread_rng().gen_range(0.0..1.0) < environment.inherit_disable
+                    && !conn.enabled
+                    || !matching.enabled
+                {
+                    gene.enabled = false;
+                }
+            }
+            if child.nodes.iter().find(|n| n.id == gene.from).is_none() {
+                child.nodes.push(Node::new(gene.from, NodeType::Hidden));
+            }
+            if child.nodes.iter().find(|n| n.id == gene.to).is_none() {
+                child.nodes.push(Node::new(gene.from, NodeType::Hidden));
+            }
+            child.connections.push(gene);
+        }
+        child.inputs = environment.inputs;
+        child.outputs = environment.outputs;
+        child.node_id_gen = child.nodes.len();
+        child
     }
     pub(crate) fn mutate(
         &self,
-        genome: Genome,
+        mut genome: Genome,
         existing_innovation: &mut ExistingInnovation,
+        environment: &Environment,
     ) -> Genome {
-        todo!()
+        for conn in genome.connections.iter_mut() {
+            if rand::thread_rng().gen_range(0.0..1.0) < environment.connection_weight {
+                if rand::thread_rng().gen_range(0.0..1.0) < environment.perturb {
+                    let perturb = rand::thread_rng().gen_range(-1.0..1.0);
+                    conn.weight += perturb;
+                } else {
+                    conn.weight = rand::thread_rng().gen_range(0.0..1.0);
+                }
+            }
+        }
+        if rand::thread_rng().gen_range(0.0..1.0) < self.add_node {
+            if genome.connections.is_empty() {
+                return genome;
+            }
+            let new = Node::new(genome.node_id_gen, NodeType::Hidden);
+            genome.node_id_gen += 1;
+            let idx = rand::thread_rng().gen_range(0..genome.connections.len());
+            let existing_connection = genome.connections.get(idx).cloned().unwrap();
+            genome.connections.get_mut(idx).unwrap().enabled = false;
+            let a = Connection::new(
+                existing_connection.from,
+                new.id,
+                1.0,
+                existing_innovation.checked_innovation(existing_connection.from, new.id),
+            );
+            let b = Connection::new(
+                new.id,
+                existing_connection.to,
+                existing_connection.weight,
+                existing_innovation.checked_innovation(new.id, existing_connection.to),
+            );
+            genome.connections.push(a);
+            genome.connections.push(b);
+            genome.nodes.push(new);
+        } else if rand::thread_rng().gen_range(0.0..1.0) < self.add_connection {
+            let potential_inputs = genome
+                .nodes
+                .iter()
+                .filter(|n| n.ty != NodeType::Output)
+                .copied()
+                .collect::<Vec<_>>();
+            let potential_outputs = genome
+                .nodes
+                .iter()
+                .filter(|n| n.ty != NodeType::Input && n.ty != NodeType::Bias)
+                .copied()
+                .collect::<Vec<_>>();
+            if potential_inputs.is_empty() || potential_outputs.is_empty() {
+                return genome;
+            }
+            let idx = rand::thread_rng().gen_range(0..potential_inputs.len());
+            let input = potential_inputs.get(idx).copied().unwrap();
+            let idx = rand::thread_rng().gen_range(0..potential_inputs.len());
+            let output = potential_outputs.get(idx).copied().unwrap();
+            if genome
+                .connections
+                .iter()
+                .find(|c| c.from == input.id && c.to == output.id)
+            {
+                return genome;
+            }
+            let connection = Connection::new(
+                input.id,
+                output.id,
+                rand::thread_rng().gen_range(0.0..1.0),
+                existing_innovation.checked_innovation(input.id, output.id),
+            );
+            genome.connections.push(connection);
+        }
+        genome
     }
-}
-
-impl Environment {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
         Self {
             c1: 0.0,
             c2: 0.0,
             c3: 0.0,
-            threshold: 0.0,
+            compatibility_threshold: 0.0,
             elitism: 0.0,
             only_mutate: 0.0,
             stagnation_threshold: 0,
             add_node: 0.0,
             add_connection: 0.0,
             inherit_disable: 0.0,
+            connection_weight: 0.0,
+            perturb: 0.0,
+            inputs,
+            outputs,
         }
     }
     pub(crate) fn c1(&mut self, c1: f32) {
         self.c1 = c1;
     }
-
     pub fn set_c1(&mut self, c1: f32) {
         self.c1 = c1;
     }
-
     pub fn set_c2(&mut self, c2: f32) {
         self.c2 = c2;
     }
-
     pub fn set_c3(&mut self, c3: f32) {
         self.c3 = c3;
     }
-
-    pub fn set_threshold(&mut self, threshold: f32) {
-        self.threshold = threshold;
-    }
-
     pub fn set_elitism(&mut self, elitism: f32) {
         self.elitism = elitism;
     }
-
     pub fn set_only_mutate(&mut self, only_mutate: f32) {
         self.only_mutate = only_mutate;
     }
-
     pub fn set_stagnation_threshold(&mut self, stagnation_threshold: Generation) {
         self.stagnation_threshold = stagnation_threshold;
     }
-
     pub fn set_add_node(&mut self, add_node: f32) {
         self.add_node = add_node;
     }
-
     pub fn set_add_connection(&mut self, add_connection: f32) {
         self.add_connection = add_connection;
     }
-
     pub fn set_inherit_disable(&mut self, inherit_disable: f32) {
         self.inherit_disable = inherit_disable;
     }
+    pub fn set_compatibility_threshold(&mut self, compatibility_threshold: f32) {
+        self.compatibility_threshold = compatibility_threshold;
+    }
+    pub fn set_connection_weight(&mut self, connection_weight: f32) {
+        self.connection_weight = connection_weight;
+    }
+    pub fn set_perturb(&mut self, perturb: f32) {
+        self.perturb = perturb;
+    }
 }
-// pub(crate) fn creates_cycle(from: NodeId, to: NodeId, genome: &Genome) -> bool {
-//     if from == to {
-//         return true;
-//     }
-//     let mut visited = vec![to];
-//     while true {
-//         let mut num_added = 0;
-//         for c in genome.connections.iter() {
-//             if visited.iter().find(|v| **v == c.from).is_some()
-//                 && visited.iter().find(|v| **v == c.to).is_none()
-//             {
-//                 if c.to == from {
-//                     return true;
-//                 } else {
-//                     visited.push(c.to);
-//                     num_added += 1;
-//                 }
-//             }
-//         }
-//         if num_added == 0 {
-//             return false;
-//         }
-//     }
-//     false
-// }
+pub(crate) fn creates_cycle(from: NodeId, to: NodeId, genome: &Genome) -> bool {
+    if from == to {
+        return true;
+    }
+    let mut visited = vec![to];
+    while true {
+        let mut num_added = 0;
+        for c in genome.connections.iter() {
+            if visited.iter().find(|v| **v == c.from).is_some()
+                && visited.iter().find(|v| **v == c.to).is_none()
+            {
+                if c.to == from {
+                    return true;
+                } else {
+                    visited.push(c.to);
+                    num_added += 1;
+                }
+            }
+        }
+        if num_added == 0 {
+            return false;
+        }
+    }
+    false
+}
