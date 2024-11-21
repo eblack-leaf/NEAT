@@ -148,6 +148,7 @@ pub(crate) fn neat() {
             let elite_bound = ((environment.elitism * members.len() as f32) as usize)
                 .min(members.len())
                 .max(1);
+            println!("elite-bound: {} member-len: {}", elite_bound, members.len());
             let elites = members.get(0..elite_bound).unwrap().to_vec();
             for _om in 0..only_mutate as usize {
                 let selected = elites
@@ -193,6 +194,9 @@ pub(crate) fn neat() {
                     environment.mutate(crossover, &mut existing_innovation, &environment);
                 population.next_gen.push(mutated_crossover);
             }
+        }
+        for genome in population.next_gen.iter_mut() {
+            genome.network_depth = genome.max_depth();
         }
         runner.history.push(GenerationHistory::new(
             gen,
@@ -278,6 +282,7 @@ pub(crate) struct Genome {
     pub(crate) fitness: Fitness,
     pub(crate) inputs: usize,
     pub(crate) outputs: usize,
+    pub(crate) network_depth: usize,
 }
 
 impl Genome {
@@ -289,13 +294,13 @@ impl Genome {
             for input in 0..inputs {
                 nodes.push(Node::new(input, NodeType::Input));
             }
-            for output in nodes.len() - 1..nodes.len() - 1 + outputs {
+            for output in inputs..inputs + outputs {
                 nodes.push(Node::new(output, NodeType::Output));
             }
-            for bias in nodes.len() - 1..nodes.len() - 1 + outputs {
+            for bias in inputs + outputs..inputs + outputs * 2 {
                 nodes.push(Node::new(bias, NodeType::Bias));
             }
-            let node_id_gen = nodes.len() - 1;
+            let node_id_gen = nodes.len();
             let mut innovation = 0;
             for i in 0..inputs {
                 for o in inputs..inputs + outputs {
@@ -305,7 +310,7 @@ impl Genome {
                     innovation += 1;
                 }
             }
-            for bias in outputs..outputs * 2 {
+            for bias in inputs + outputs..inputs + outputs * 2 {
                 for o in inputs..inputs + outputs {
                     let connection =
                         Connection::new(bias, o, rand::thread_rng().gen_range(0.0..1.0), innovation);
@@ -322,22 +327,26 @@ impl Genome {
                 fitness: 0.0,
                 inputs,
                 outputs,
+                network_depth: 1,
             }
         }
         Self {
             id,
             connections,
-            nodes,
             node_id_gen: 0,
+            nodes,
             species_id: 0,
             fitness: 0.0,
             inputs,
             outputs,
+            network_depth: 1,
         }
     }
     pub(crate) fn max_depth(&self) -> usize {
         let mut max = 0;
+        println!("START MAX DEPTH ---------------------------------------------------------------");
         for o in self.inputs..(self.inputs + self.outputs) {
+            println!("checking output {}", o);
             let current = self.depth(0, o);
             if current > max {
                 max = current;
@@ -348,16 +357,19 @@ impl Genome {
     pub(crate) fn depth(&self, count: usize, to: NodeId) -> usize {
         let mut max = count;
         if count > 100 {
+            println!("aborting depth @ {}", count);
             return 10;
         }
         for c in self.connections.iter() {
             if c.to == to {
+                println!("incoming-connection from: {} to: {}", c.from, c.to);
                 let current = self.depth(count + 1, c.from);
                 if current > max {
                     max = current;
                 }
             }
         }
+        println!("max {}", max);
         max
     }
     pub(crate) fn activate<I: Into<Input>>(&self, input: I) -> Output {
@@ -365,8 +377,8 @@ impl Genome {
         let mut solved_outputs = Output::new(vec![0.0; self.outputs]);
         let mut summations = vec![0f32; self.nodes.len()];
         let mut activations = vec![0f32; self.nodes.len()];
-        println!("max-depth: {} for {}", self.max_depth(), self.id);
-        for _relax in 0..self.max_depth().max(1) {
+        println!("max-depth: {} for {}", self.network_depth, self.id);
+        for _relax in 0..self.network_depth.max(1) {
             let mut solved = vec![false; self.outputs];
             let mut valid = vec![false; self.nodes.len()];
             for i in 0..self.inputs {
@@ -664,6 +676,7 @@ impl SpeciesManager {
                 let representative = genomes.get(rand_rep).unwrap().clone();
                 species.representative = representative;
             } else {
+                println!("empty @ {}", species.members.len());
                 empty.push(species.id);
             }
         }
@@ -671,6 +684,7 @@ impl SpeciesManager {
         empty.reverse();
         for s_id in empty {
             let idx = self.species.iter().position(|s| s.id == s_id).unwrap();
+            println!("removing species w/ member-count: {} and id {}", self.species.get(s_id).unwrap().members.len(), s_id);
             self.species.remove(idx);
         }
     }
@@ -795,6 +809,8 @@ impl Environment {
         let mut child = Genome::new(id, 0, 0);
         for conn in best.connections.iter() {
             let mut gene = conn.clone();
+            let mut from_type = best.nodes.get(gene.from).unwrap().ty;
+            let mut to_type = best.nodes.get(gene.to).unwrap().ty;
             if let Some(matching) = other
                 .connections
                 .iter()
@@ -802,6 +818,8 @@ impl Environment {
             {
                 if rand::thread_rng().gen_range(0.0..1.0) < 0.5 {
                     gene = matching.clone();
+                    from_type = other.nodes.get(gene.from).unwrap().ty;
+                    to_type = other.nodes.get(gene.to).unwrap().ty;
                 }
                 if rand::thread_rng().gen_range(0.0..1.0) < environment.inherit_disable
                     && !conn.enabled
@@ -811,10 +829,10 @@ impl Environment {
                 }
             }
             if child.nodes.iter().find(|n| n.id == gene.from).is_none() {
-                child.nodes.push(Node::new(gene.from, NodeType::Hidden));
+                child.nodes.push(Node::new(gene.from, from_type));
             }
             if child.nodes.iter().find(|n| n.id == gene.to).is_none() {
-                child.nodes.push(Node::new(gene.from, NodeType::Hidden));
+                child.nodes.push(Node::new(gene.to, to_type));
             }
             child.connections.push(gene);
         }
@@ -844,6 +862,7 @@ impl Environment {
                 return genome;
             }
             let new = Node::new(genome.node_id_gen, NodeType::Hidden);
+            println!("adding node {}", new.id);
             genome.node_id_gen += 1;
             let idx = rand::thread_rng().gen_range(0..genome.connections.len());
             let existing_connection = genome.connections.get(idx).cloned().unwrap();
@@ -883,6 +902,9 @@ impl Environment {
             let input = potential_inputs.get(idx).copied().unwrap();
             let idx = rand::thread_rng().gen_range(0..potential_outputs.len());
             let output = potential_outputs.get(idx).copied().unwrap();
+            if input.id == output.id {
+                return genome;
+            }
             if genome
                 .connections
                 .iter()
