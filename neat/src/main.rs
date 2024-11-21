@@ -1,7 +1,7 @@
 mod neat;
 mod new_neat;
 
-use crate::neat::neat;
+use crate::new_neat::neat;
 use foliage::Foliage;
 
 const VIEW_AREA: (f32, f32) = (1700.0, 800.0);

@@ -5,8 +5,7 @@ pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0],
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 pub(crate) const INPUT_DIM: usize = 2;
 pub(crate) const OUTPUT_DIM: usize = 1;
-#[test]
-fn test() {
+pub(crate) fn neat() {
     let mut environment = Environment::new(INPUT_DIM, OUTPUT_DIM);
     environment.set_c1(1.0);
     environment.set_c2(1.0);
@@ -34,6 +33,7 @@ fn test() {
     let mut existing_innovation = ExistingInnovation::new(INPUT_DIM, OUTPUT_DIM);
     let mut runner = Runner::new(150, 3.9);
     for gen in 0..runner.generations {
+        println!("generation {}", gen);
         let mut max_found = None;
         for genome in population.genomes.iter_mut() {
             genome.fitness = (evaluation.func)(genome, XOR_INPUT.into(), XOR_OUTPUT.into());
