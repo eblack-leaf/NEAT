@@ -25,6 +25,7 @@ pub(crate) fn neat() {
             let output = genome.activate(xi.to_vec());
             fitness -= (output.data[0] - actual.data[i]).powi(2);
         }
+        println!("fitness for {} = {}", genome.id, fitness);
         fitness
     });
     let mut population = Population::new(150, INPUT_DIM, OUTPUT_DIM);
@@ -62,6 +63,7 @@ pub(crate) fn neat() {
                 .max_by(|a, b| a.partial_cmp(b).unwrap())
                 .unwrap_or_default();
             if max > species.max_fitness {
+                println!("improved to {} @ {}", max, gen);
                 species.max_fitness = max;
                 species.last_improvement = gen;
             }
@@ -69,11 +71,15 @@ pub(crate) fn neat() {
                 runner.to_cull.push(species.id);
             }
         }
+        runner.to_cull.sort();
+        runner.to_cull.reverse();
         for culled in runner.to_cull.drain(..) {
             if species_manager.species.len() == 1 {
                 // reset somehow?
+                println!("skipping cull of {} for len() == 1", culled);
                 continue;
             }
+            println!("culling {}", culled);
             let idx = species_manager
                 .species
                 .iter()
@@ -94,10 +100,12 @@ pub(crate) fn neat() {
             .cloned()
             .unwrap();
         if current_best.fitness > runner.best_genome.fitness {
+            println!("new-best: {} id: {} @ {}", current_best.fitness, current_best.id, gen);
             runner.best_genome = current_best.clone();
         }
         runner.max_fitness = current_best.fitness;
         runner.fitness_range = (runner.max_fitness - runner.min_fitness).max(1.0);
+        println!("max {} min {} range {}", runner.max_fitness, runner.min_fitness, runner.fitness_range);
         for species in species_manager.species.iter_mut() {
             species.explicit_fitness_sharing = 0.0;
             for id in species.members.iter() {
@@ -107,6 +115,7 @@ pub(crate) fn neat() {
             species.explicit_fitness_sharing /= species.members.len() as f32;
             species.explicit_fitness_sharing -= runner.min_fitness;
             species.explicit_fitness_sharing /= runner.fitness_range;
+            println!("species: {} explicit-fitness: {}", species.id, species.explicit_fitness_sharing);
         }
         runner.total_fitness = species_manager
             .species
@@ -115,6 +124,7 @@ pub(crate) fn neat() {
             .sum();
         for species in species_manager.species.iter_mut() {
             species.percent_total = species.explicit_fitness_sharing / runner.total_fitness;
+            println!("species: {} percent-total: {}", species.id, species.percent_total);
         }
         runner.next_gen_remaining = population.count;
         runner.next_gen_id = 0;
@@ -124,6 +134,7 @@ pub(crate) fn neat() {
             if runner.next_gen_remaining <= 0 {
                 offspring_count += runner.next_gen_remaining as f32;
             }
+            println!("offspring_count {} for {}", offspring_count, species.id);
             let only_mutate = (offspring_count * environment.only_mutate).floor();
             let to_crossover = offspring_count - only_mutate;
             let mut members = species
@@ -354,6 +365,7 @@ impl Genome {
         let mut solved_outputs = Output::new(vec![0.0; self.outputs]);
         let mut summations = vec![0f32; self.nodes.len()];
         let mut activations = vec![0f32; self.nodes.len()];
+        println!("max-depth: {} for {}", self.max_depth(), self.id);
         for _relax in 0..self.max_depth().max(1) {
             let mut solved = vec![false; self.outputs];
             let mut valid = vec![false; self.nodes.len()];
@@ -377,6 +389,7 @@ impl Genome {
                 .collect::<Vec<_>>();
             while solved.iter().any(|s| *s == false) && abort < ABORT {
                 if abort == ABORT {
+                    println!("aborting {}", self.id);
                     return solved_outputs;
                 }
                 for non in non_input.iter() {
@@ -416,6 +429,7 @@ impl Genome {
                 }
                 abort += 1;
             }
+            println!("activations {} : {:?}", self.id, activations);
             for i in self.inputs..self.inputs + self.outputs {
                 solved_outputs.data[i - self.inputs] = *activations.get(i).unwrap();
             }
@@ -642,13 +656,22 @@ impl SpeciesManager {
                 self.species.push(Species::new(id, genome.clone(), gen));
             }
         }
+        let mut empty = vec![];
         for species in self.species.iter_mut() {
             if !species.members.is_empty() {
                 let rand_idx = rand::thread_rng().gen_range(0..species.members.len());
                 let rand_rep = *species.members.get(rand_idx).unwrap();
                 let representative = genomes.get(rand_rep).unwrap().clone();
                 species.representative = representative;
+            } else {
+                empty.push(species.id);
             }
+        }
+        empty.sort();
+        empty.reverse();
+        for s_id in empty {
+            let idx = self.species.iter().position(|s| s.id == s_id).unwrap();
+            self.species.remove(idx);
         }
     }
     pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
