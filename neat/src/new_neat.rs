@@ -198,9 +198,19 @@ fn test() {
 pub(crate) struct Data {
     pub(crate) data: Vec<Vec<f32>>,
 }
-impl<V: Into<Vec<Vec<f32>>>> From<V> for Data {
-    fn from(v: V) -> Self {
-        Self { data: v.into() }
+impl<const N: usize, const M: usize> From<[[f32; N]; M]> for Data {
+    fn from(value: [[f32; N]; M]) -> Self {
+        Self {
+            data: {
+                let mut data = vec![vec![0.0; N]; M];
+                for (i, v) in value.iter().enumerate() {
+                    for (j, b) in v.iter().enumerate() {
+                        data[i][j] = *b;
+                    }
+                }
+                data
+            },
+        }
     }
 }
 pub(crate) type Generation = usize;
@@ -264,39 +274,50 @@ impl Genome {
     pub(crate) fn new(id: GenomeId, inputs: usize, outputs: usize) -> Self {
         let mut connections = vec![];
         let mut nodes = vec![];
-
-        for input in 0..inputs {
-            nodes.push(Node::new(input, NodeType::Input));
-        }
-        for output in nodes.len() - 1..nodes.len() - 1 + outputs {
-            nodes.push(Node::new(output, NodeType::Output));
-        }
-        for bias in nodes.len() - 1..nodes.len() - 1 + outputs {
-            nodes.push(Node::new(bias, NodeType::Bias));
-        }
-        let node_id_gen = nodes.len() - 1;
-        let mut innovation = 0;
-        for i in 0..inputs {
-            for o in inputs..inputs + outputs {
-                let connection =
-                    Connection::new(i, o, rand::thread_rng().gen_range(0.0..1.0), innovation);
-                connections.push(connection);
-                innovation += 1;
+        if inputs > 0 && outputs > 0 {
+            for input in 0..inputs {
+                nodes.push(Node::new(input, NodeType::Input));
             }
-        }
-        for bias in outputs..outputs * 2 {
-            for o in inputs..inputs + outputs {
-                let connection =
-                    Connection::new(bias, o, rand::thread_rng().gen_range(0.0..1.0), innovation);
-                connections.push(connection);
-                innovation += 1;
+            for output in nodes.len() - 1..nodes.len() - 1 + outputs {
+                nodes.push(Node::new(output, NodeType::Output));
+            }
+            for bias in nodes.len() - 1..nodes.len() - 1 + outputs {
+                nodes.push(Node::new(bias, NodeType::Bias));
+            }
+            let node_id_gen = nodes.len() - 1;
+            let mut innovation = 0;
+            for i in 0..inputs {
+                for o in inputs..inputs + outputs {
+                    let connection =
+                        Connection::new(i, o, rand::thread_rng().gen_range(0.0..1.0), innovation);
+                    connections.push(connection);
+                    innovation += 1;
+                }
+            }
+            for bias in outputs..outputs * 2 {
+                for o in inputs..inputs + outputs {
+                    let connection =
+                        Connection::new(bias, o, rand::thread_rng().gen_range(0.0..1.0), innovation);
+                    connections.push(connection);
+                    innovation += 1;
+                }
+            }
+            return Self {
+                id,
+                connections,
+                nodes,
+                node_id_gen,
+                species_id: 0,
+                fitness: 0.0,
+                inputs,
+                outputs,
             }
         }
         Self {
             id,
             connections,
             nodes,
-            node_id_gen,
+            node_id_gen: 0,
             species_id: 0,
             fitness: 0.0,
             inputs,
@@ -837,12 +858,12 @@ impl Environment {
             }
             let idx = rand::thread_rng().gen_range(0..potential_inputs.len());
             let input = potential_inputs.get(idx).copied().unwrap();
-            let idx = rand::thread_rng().gen_range(0..potential_inputs.len());
+            let idx = rand::thread_rng().gen_range(0..potential_outputs.len());
             let output = potential_outputs.get(idx).copied().unwrap();
             if genome
                 .connections
                 .iter()
-                .find(|c| c.from == input.id && c.to == output.id)
+                .find(|c| c.from == input.id && c.to == output.id).is_some()
             {
                 return genome;
             }
