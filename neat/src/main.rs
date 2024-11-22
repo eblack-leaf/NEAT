@@ -16,7 +16,7 @@ fn main() {
             solved += 1;
             println!(
                 "solved {} / {} genome: {}, {}, {} @ gen: {}",
-                solved,
+                run + 1,
                 runs,
                 solution.fitness,
                 solution.nodes.len(),
@@ -28,6 +28,8 @@ fn main() {
                     .len(),
                 gen
             );
+        } else {
+            println!("FAILED {} / {}", run + 1, runs);
         }
     }
 }
