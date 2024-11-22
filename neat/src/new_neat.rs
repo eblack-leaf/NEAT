@@ -71,20 +71,26 @@ pub(crate) fn neat() {
                 runner.to_cull.push(species.id);
             }
         }
-        runner.to_cull.sort();
-        runner.to_cull.reverse();
-        for culled in runner.to_cull.drain(..) {
-            if species_manager.species.len() == 1 {
-                // reset somehow?
-                println!("skipping cull of {} for len() == 1", culled);
-                continue;
-            }
-            println!("culling {}", culled);
-            let idx = species_manager
+        for id in runner.to_cull.iter_mut() {
+            *id = species_manager
                 .species
                 .iter()
-                .position(|s| s.id == culled)
+                .cloned()
+                .position(|s| s.id == *id)
                 .unwrap();
+        }
+        runner.to_cull.sort();
+        runner.to_cull.reverse();
+        for idx in runner.to_cull.drain(..) {
+            if species_manager.species.len() == 1 {
+                // reset somehow?
+                println!(
+                    "skipping cull of {} for len() == 1",
+                    species_manager.species.get(idx).unwrap().id
+                );
+                continue;
+            }
+            println!("culling {}", species_manager.species.get(idx).unwrap().id);
             species_manager.species.remove(idx);
         }
         runner.min_fitness = population
@@ -585,6 +591,7 @@ impl<FFN: Fn(&Genome, Data, Output) -> Fitness> Evaluation<FFN> {
     }
 }
 pub(crate) type SpeciesId = usize;
+#[derive(Clone)]
 pub(crate) struct Species {
     pub(crate) id: SpeciesId,
     pub(crate) members: Vec<GenomeId>,
@@ -722,14 +729,16 @@ impl SpeciesManager {
                 empty.push(species.id);
             }
         }
+        for id in empty.iter_mut() {
+            *id = self.species.iter().position(|s| s.id == *id).unwrap();
+        }
         empty.sort();
         empty.reverse();
-        for s_id in empty {
-            let idx = self.species.iter().position(|s| s.id == s_id).unwrap();
+        for idx in empty {
             println!(
                 "removing species w/ member-count: {} and id {}",
                 self.species.get(idx).unwrap().members.len(),
-                s_id
+                idx
             );
             self.species.remove(idx);
         }
@@ -752,7 +761,7 @@ pub(crate) struct Runner {
     pub(crate) fitness_range: Fitness,
     pub(crate) total_fitness: Fitness,
     pub(crate) next_gen_remaining: usize,
-    pub(crate) to_cull: Vec<SpeciesId>,
+    pub(crate) to_cull: Vec<usize>,
     pub(crate) best_genome: Genome,
     pub(crate) mutations: Vec<MutationHistory>,
     pub(crate) lineage: Vec<Lineage>,
@@ -853,12 +862,19 @@ impl Environment {
         environment: &Environment,
     ) -> Genome {
         let mut child = Genome::new(id, 0, 0);
-        println!("CROSSOVER ----------------------------------------------------------------------");
+        println!(
+            "CROSSOVER ----------------------------------------------------------------------"
+        );
         for conn in best.connections.iter() {
             let mut gene = conn.clone();
-            let mut from_type = best.nodes.get(gene.from).unwrap().ty;
-            let mut to_type = best.nodes.get(gene.to).unwrap().ty;
-            println!("best-connection: {}\n from: {} to: {}", conn, best.nodes.get(gene.from).unwrap(), best.nodes.get(gene.to).unwrap());
+            let mut from_type = best.nodes.iter().find(|n| n.id == gene.from).unwrap().ty;
+            let mut to_type = best.nodes.iter().find(|n| n.id == gene.to).unwrap().ty;
+            println!(
+                "best-connection: {}\n from: {} to: {}",
+                conn,
+                best.nodes.iter().find(|n| n.id == gene.from).unwrap(),
+                best.nodes.iter().find(|n| n.id == gene.to).unwrap()
+            );
             if let Some(matching) = other
                 .connections
                 .iter()
@@ -866,9 +882,14 @@ impl Environment {
             {
                 if rand::thread_rng().gen_range(0.0..1.0) < 0.5 {
                     gene = matching.clone();
-                    from_type = other.nodes.get(gene.from).unwrap().ty;
-                    to_type = other.nodes.get(gene.to).unwrap().ty;
-                    println!("matching-connection: {}\n from: {} to: {}", matching, other.nodes.get(gene.from).unwrap(), other.nodes.get(gene.to).unwrap());
+                    from_type = other.nodes.iter().find(|n| n.id == gene.from).unwrap().ty;
+                    to_type = other.nodes.iter().find(|n| n.id == gene.to).unwrap().ty;
+                    println!(
+                        "matching-connection: {}\n from: {} to: {}",
+                        conn,
+                        other.nodes.iter().find(|n| n.id == gene.from).unwrap(),
+                        other.nodes.iter().find(|n| n.id == gene.to).unwrap()
+                    );
                 }
                 if rand::thread_rng().gen_range(0.0..1.0) < environment.inherit_disable
                     && !conn.enabled
@@ -898,7 +919,9 @@ impl Environment {
         for conn in child.connections.iter() {
             println!("crossover:connections: {}", conn);
         }
-        println!("END CROSSOVER ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||");
+        println!(
+            "END CROSSOVER ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||"
+        );
         child
     }
     pub(crate) fn mutate(
@@ -973,7 +996,10 @@ impl Environment {
             {
                 return genome;
             }
-            println!("adding connection: from: {}:{:?} to: {}:{:?}", input.id, input.ty, output.id, output.ty);
+            println!(
+                "adding connection: from: {}:{:?} to: {}:{:?}",
+                input.id, input.ty, output.id, output.ty
+            );
             let connection = Connection::new(
                 input.id,
                 output.id,
