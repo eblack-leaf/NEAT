@@ -6,7 +6,7 @@ pub(crate) const XOR_INPUT: [[f32; 2]; 4] = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0],
 pub(crate) const XOR_OUTPUT: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 pub(crate) const INPUT_DIM: usize = 2;
 pub(crate) const OUTPUT_DIM: usize = 1;
-pub(crate) fn neat() {
+pub(crate) fn neat() -> Option<(Genome, Generation)> {
     let mut environment = Environment::new(INPUT_DIM, OUTPUT_DIM);
     environment.set_c1(1.0);
     environment.set_c2(1.0);
@@ -34,7 +34,7 @@ pub(crate) fn neat() {
     let mut existing_innovation = ExistingInnovation::new(INPUT_DIM, OUTPUT_DIM);
     let mut runner = Runner::new(150, 3.9);
     for gen in 0..runner.generations {
-        println!("generation {} ------------------------------------------------------------", gen);
+        // println!("generation {} ------------------------------------------------------------", gen);
         let mut max_found = None;
         for genome in population.genomes.iter_mut() {
             genome.fitness = (evaluation.func)(genome, XOR_INPUT.into(), XOR_OUTPUT.into());
@@ -53,15 +53,15 @@ pub(crate) fn neat() {
                 runner.mutations.drain(..).collect::<Vec<_>>(),
                 runner.lineage.drain(..).collect::<Vec<_>>(),
             ));
-            println!("max-found: id {} w/ fitness {} species {}", max.id, max.fitness, max.species_id);
-            for node in max.nodes.iter() {
-                println!("node: {}", node);
-            }
-            for conn in max.connections.iter() {
-                println!("conn: {}", conn);
-            }
+            // println!("max-found: id {} w/ fitness {} species {}", max.id, max.fitness, max.species_id);
+            // for node in max.nodes.iter() {
+            //     println!("node: {}", node);
+            // }
+            // for conn in max.connections.iter() {
+            //     println!("conn: {}", conn);
+            // }
             // TODO save history / print-out
-            return;
+            return Some((max, gen));
         }
         for species in species_manager.species.iter_mut() {
             let max = species
@@ -71,7 +71,7 @@ pub(crate) fn neat() {
                 .max_by(|a, b| a.partial_cmp(b).unwrap())
                 .unwrap_or_default();
             if max > species.max_fitness {
-                println!("improved to {} @ {}", max, gen);
+                // println!("improved to {} @ {}", max, gen);
                 species.max_fitness = max;
                 species.last_improvement = gen;
             }
@@ -92,13 +92,13 @@ pub(crate) fn neat() {
         for idx in runner.to_cull.drain(..) {
             if species_manager.species.len() == 1 {
                 // reset somehow?
-                println!(
-                    "skipping cull of {} for len() == 1",
-                    species_manager.species.get(idx).unwrap().id
-                );
+                // println!(
+                //     "skipping cull of {} for len() == 1",
+                //     species_manager.species.get(idx).unwrap().id
+                // );
                 continue;
             }
-            println!("culling {}", species_manager.species.get(idx).unwrap().id);
+            // println!("culling {}", species_manager.species.get(idx).unwrap().id);
             species_manager.species.remove(idx);
         }
         runner.min_fitness = population
@@ -114,22 +114,24 @@ pub(crate) fn neat() {
             .cloned()
             .unwrap();
         if current_best.fitness > runner.best_genome.fitness {
-            println!(
-                "new-best: {} id: {} @ gen: {}",
-                current_best.fitness, current_best.id, gen
-            );
+            // println!(
+            //     "new-best: {} id: {} @ gen: {}",
+            //     current_best.fitness, current_best.id, gen
+            // );
             runner.best_genome = current_best.clone();
         }
         runner.max_fitness = current_best.fitness;
         runner.fitness_range = (runner.max_fitness - runner.min_fitness).max(1.0);
-        println!(
-            "max {} min {} range {}",
-            runner.max_fitness, runner.min_fitness, runner.fitness_range
-        );
+        // println!(
+        //     "max {} min {} range {}",
+        //     runner.max_fitness, runner.min_fitness, runner.fitness_range
+        // );
         for species in species_manager.species.iter_mut() {
             species.explicit_fitness_sharing = 0.0;
             if species.members.is_empty() {
-                println!("skipping empty species 888888888888888888888888888888888888888888888888888");
+                println!(
+                    "skipping empty species 888888888888888888888888888888888888888888888888888"
+                );
             }
             for id in species.members.iter() {
                 let genome = population.genomes.get(*id).unwrap();
@@ -143,10 +145,10 @@ pub(crate) fn neat() {
             species.explicit_fitness_sharing /= species.members.len() as f32;
             // species.explicit_fitness_sharing -= runner.min_fitness;
             // species.explicit_fitness_sharing /= runner.fitness_range;
-            println!(
-                "species: {} explicit-fitness: {}",
-                species.id, species.explicit_fitness_sharing
-            );
+            // println!(
+            //     "species: {} explicit-fitness: {}",
+            //     species.id, species.explicit_fitness_sharing
+            // );
         }
         runner.total_fitness = species_manager
             .species
@@ -156,10 +158,10 @@ pub(crate) fn neat() {
         // println!("total-fitness: {}", runner.total_fitness);
         for species in species_manager.species.iter_mut() {
             species.percent_total = species.explicit_fitness_sharing / runner.total_fitness;
-            println!(
-                "species: {} percent-total: {}",
-                species.id, species.percent_total
-            );
+            // println!(
+            //     "species: {} percent-total: {}",
+            //     species.id, species.percent_total
+            // );
         }
         runner.next_gen_remaining = population.count;
         runner.next_gen_id = 0;
@@ -169,7 +171,7 @@ pub(crate) fn neat() {
             if runner.next_gen_remaining <= 0 {
                 offspring_count += runner.next_gen_remaining as f32;
             }
-            println!("offspring_count {} for {}", offspring_count, species.id);
+            // println!("offspring_count {} for {}", offspring_count, species.id);
             let only_mutate = (offspring_count * environment.only_mutate).floor();
             let to_crossover = offspring_count - only_mutate;
             let mut members = species
@@ -183,15 +185,14 @@ pub(crate) fn neat() {
             let elite_bound = ((environment.elitism * members.len() as f32) as usize)
                 .min(members.len())
                 .max(1);
-            println!("elite-bound: {} member-len: {}", elite_bound, members.len());
+            // println!("elite-bound: {} member-len: {}", elite_bound, members.len());
             let elites = members.get(0..elite_bound).unwrap().to_vec();
             for _om in 0..only_mutate as usize {
                 let selected = elites
                     .get(rand::thread_rng().gen_range(0..elites.len()))
                     .cloned()
                     .unwrap();
-                let mut mutated =
-                    environment.mutate(selected, &mut existing_innovation);
+                let mut mutated = environment.mutate(selected, &mut existing_innovation);
                 mutated.id = runner.next_gen_id;
                 runner.next_gen_id += 1;
                 population.next_gen.push(mutated);
@@ -222,11 +223,9 @@ pub(crate) fn neat() {
                         (parent1, parent2)
                     }
                 };
-                let crossover =
-                    environment.crossover(runner.next_gen_id, best, other);
+                let crossover = environment.crossover(runner.next_gen_id, best, other);
                 runner.next_gen_id += 1;
-                let mutated_crossover =
-                    environment.mutate(crossover, &mut existing_innovation);
+                let mutated_crossover = environment.mutate(crossover, &mut existing_innovation);
                 population.next_gen.push(mutated_crossover);
             }
         }
@@ -241,13 +240,14 @@ pub(crate) fn neat() {
             runner.mutations.drain(..).collect(),
             runner.lineage.drain(..).collect(),
         ));
-        println!(
-            "best-genome: id: {} fitness: {}",
-            runner.best_genome.id, runner.best_genome.fitness
-        );
+        // println!(
+        //     "best-genome: id: {} fitness: {}",
+        //     runner.best_genome.id, runner.best_genome.fitness
+        // );
         population.genomes = population.next_gen.drain(..).collect();
         species_manager.speciate(&mut population.genomes, &environment, gen);
     }
+    None
 }
 pub(crate) struct Data {
     pub(crate) data: Vec<Vec<f32>>,
@@ -742,7 +742,7 @@ impl SpeciesManager {
                 let representative = genomes.get(rand_rep).unwrap().clone();
                 species.representative = representative;
             } else {
-                println!("empty @ {}", species.members.len());
+                // println!("empty @ {}", species.members.len());
                 empty.push(species.id);
             }
         }
@@ -752,11 +752,11 @@ impl SpeciesManager {
         empty.sort();
         empty.reverse();
         for idx in empty {
-            println!(
-                "removing species w/ member-count: {} and id {}",
-                self.species.get(idx).unwrap().members.len(),
-                idx
-            );
+            // println!(
+            //     "removing species w/ member-count: {} and id {}",
+            //     self.species.get(idx).unwrap().members.len(),
+            //     idx
+            // );
             self.species.remove(idx);
         }
     }
@@ -871,12 +871,7 @@ pub(crate) struct Environment {
 }
 
 impl Environment {
-    pub(crate) fn crossover(
-        &self,
-        id: GenomeId,
-        best: Genome,
-        other: Genome,
-    ) -> Genome {
+    pub(crate) fn crossover(&self, id: GenomeId, best: Genome, other: Genome) -> Genome {
         let mut child = Genome::new(id, self.inputs, self.outputs);
         // println!(
         //     "CROSSOVER ----------------------------------------------------------------------"
@@ -907,10 +902,9 @@ impl Environment {
                     //     other.nodes.iter().find(|n| n.id == gene.to).unwrap()
                     // );
                 }
-                if !conn.enabled || !matching.enabled
-                {
+                if !conn.enabled || !matching.enabled {
                     if rand::thread_rng().gen_range(0.0..1.0) < self.inherit_disable {
-                        println!("disabling gene: {} {}", gene.from, gene.to);
+                        // println!("disabling gene: {} {}", gene.from, gene.to);
                         gene.enabled = false;
                     }
                 }
@@ -925,7 +919,12 @@ impl Environment {
                 // println!("adding missing node: {}", n);
                 child.nodes.push(n);
             }
-            if child.connections.iter().find(|c| c.from == gene.from && c.to == gene.to).is_none() {
+            if child
+                .connections
+                .iter()
+                .find(|c| c.from == gene.from && c.to == gene.to)
+                .is_none()
+            {
                 child.connections.push(gene);
             }
         }
@@ -963,7 +962,7 @@ impl Environment {
                 return genome;
             }
             let new = Node::new(genome.node_id_gen, NodeType::Hidden);
-            println!("adding node {}", new.id);
+            // println!("adding node {}", new.id);
             genome.node_id_gen += 1;
             let idx = rand::thread_rng().gen_range(0..genome.connections.len());
             let existing_connection = genome.connections.get(idx).cloned().unwrap();
@@ -985,10 +984,10 @@ impl Environment {
             genome.nodes.push(new);
         } else if rand::thread_rng().gen_range(0.0..1.0) < self.add_connection {
             if let Some((input, output)) = self.select_connection_nodes(&genome) {
-                println!(
-                    "adding connection: from: {}:{:?} to: {}:{:?}",
-                    input.id, input.ty, output.id, output.ty
-                );
+                // println!(
+                //     "adding connection: from: {}:{:?} to: {}:{:?}",
+                //     input.id, input.ty, output.id, output.ty
+                // );
                 let connection = Connection::new(
                     input.id,
                     output.id,

@@ -9,5 +9,25 @@ fn main() {
     // let mut foliage = Foliage::new();
     // foliage.set_desktop_size(VIEW_AREA);
     // foliage.photosynthesize();
-    neat();
+    let mut solved = 0;
+    let mut runs = 100;
+    for run in 0..runs {
+        if let Some((solution, gen)) = neat() {
+            solved += 1;
+            println!(
+                "solved {} / {} genome: {}, {}, {} @ gen: {}",
+                solved,
+                runs,
+                solution.fitness,
+                solution.nodes.len(),
+                solution
+                    .connections
+                    .iter()
+                    .filter(|c| c.enabled)
+                    .collect::<Vec<_>>()
+                    .len(),
+                gen
+            );
+        }
+    }
 }
