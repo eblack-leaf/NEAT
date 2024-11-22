@@ -653,7 +653,7 @@ impl SpeciesManager {
             for species in self.species.iter() {
                 let distance =
                     Compatibility::new(&species.representative, &genome).distance(environment);
-                if distance.abs() < environment.compatibility_threshold {
+                if distance < environment.compatibility_threshold {
                     found = Some(species.id);
                     break;
                 }
@@ -684,14 +684,14 @@ impl SpeciesManager {
         empty.reverse();
         for s_id in empty {
             let idx = self.species.iter().position(|s| s.id == s_id).unwrap();
-            println!("removing species w/ member-count: {} and id {}", self.species.get(s_id).unwrap().members.len(), s_id);
+            println!("removing species w/ member-count: {} and id {}", self.species.get(idx).unwrap().members.len(), s_id);
             self.species.remove(idx);
         }
     }
     pub(crate) fn new(inputs: usize, outputs: usize) -> Self {
         Self {
             total_fitness: 0.0,
-            species: vec![Species::new(0, Genome::new(0, inputs, outputs), 0)],
+            species: vec![],
             species_id_gen: 0,
         }
     }
