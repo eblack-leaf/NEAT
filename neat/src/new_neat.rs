@@ -10,12 +10,12 @@ pub(crate) fn neat() {
     let mut environment = Environment::new(INPUT_DIM, OUTPUT_DIM);
     environment.set_c1(1.0);
     environment.set_c2(1.0);
-    environment.set_c3(0.5);
+    environment.set_c3(0.4);
     environment.set_compatibility_threshold(3.0);
     environment.set_elitism(0.2);
     environment.set_stagnation_threshold(15);
-    environment.set_add_connection(0.5);
-    environment.set_add_node(0.1);
+    environment.set_add_connection(0.15);
+    environment.set_add_node(0.05);
     environment.set_inherit_disable(0.75);
     environment.set_only_mutate(0.25);
     environment.set_connection_weight(0.8);
@@ -28,11 +28,11 @@ pub(crate) fn neat() {
         }
         fitness
     });
-    let mut population = Population::new(1000, INPUT_DIM, OUTPUT_DIM);
+    let mut population = Population::new(150, INPUT_DIM, OUTPUT_DIM);
     let mut species_manager = SpeciesManager::new(INPUT_DIM, OUTPUT_DIM);
     species_manager.speciate(&mut population.genomes, &environment, 0);
     let mut existing_innovation = ExistingInnovation::new(INPUT_DIM, OUTPUT_DIM);
-    let mut runner = Runner::new(300, 3.9);
+    let mut runner = Runner::new(150, 3.9);
     for gen in 0..runner.generations {
         println!("generation {} ------------------------------------------------------------", gen);
         let mut max_found = None;
