@@ -618,8 +618,8 @@ impl Genome {
         for i in 0..inputs {
             nodes.push(Node::new(i, NodeType::Input));
         }
-        for o in 0..outputs {
-            nodes.push(Node::new(inputs + o, NodeType::Output));
+        for o in inputs..inputs + outputs {
+            nodes.push(Node::new(o, NodeType::Output));
         }
         let mut connections = vec![];
         for i in 0..inputs {
