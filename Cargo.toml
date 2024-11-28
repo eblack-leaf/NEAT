@@ -7,5 +7,4 @@ edition = "2021"
 debug = true
 
 [dependencies]
-foliage = { path = "../../foliage/foliage" }
 rand = "0.8.5"
