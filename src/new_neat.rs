@@ -20,7 +20,7 @@ pub(crate) fn neat() -> Option<(Genome, Generation)> {
     environment.set_only_mutate(0.25);
     environment.set_connection_weight(0.8);
     environment.set_perturb(0.9);
-    environment.set_mate_only(0.2);
+    environment.set_crossover_only(0.2);
     let evaluation = Evaluation::new(|genome: &Genome, input: Data, actual: Output| -> Fitness {
         let mut fitness = 4.0;
         for (i, xi) in input.data.iter().enumerate() {
@@ -226,7 +226,7 @@ pub(crate) fn neat() -> Option<(Genome, Generation)> {
                 };
                 let crossover = environment.crossover(runner.next_gen_id, best, other);
                 runner.next_gen_id += 1;
-                let crossover = if rand::thread_rng().gen_range(0.0..1.0) < environment.mate_only {
+                let crossover = if rand::thread_rng().gen_range(0.0..1.0) < environment.crossover_only {
                     crossover
                 } else {
                     environment.mutate(crossover, &mut existing_innovation)
@@ -873,7 +873,7 @@ pub(crate) struct Environment {
     pub(crate) perturb: f32,
     pub(crate) inputs: usize,
     pub(crate) outputs: usize,
-    pub(crate) mate_only: f32
+    pub(crate) crossover_only: f32
 }
 
 impl Environment {
@@ -1066,7 +1066,7 @@ impl Environment {
             perturb: 0.0,
             inputs,
             outputs,
-            mate_only: 0.0,
+            crossover_only: 0.0,
         }
     }
     pub(crate) fn c1(&mut self, c1: f32) {
@@ -1108,8 +1108,8 @@ impl Environment {
     pub fn set_perturb(&mut self, perturb: f32) {
         self.perturb = perturb;
     }
-    pub fn set_mate_only(&mut self, mate_only: f32) {
-        self.mate_only = mate_only;
+    pub fn set_crossover_only(&mut self, mate_only: f32) {
+        self.crossover_only = mate_only;
     }
 }
 pub(crate) fn creates_cycle(from: NodeId, to: NodeId, genome: &Genome) -> bool {
